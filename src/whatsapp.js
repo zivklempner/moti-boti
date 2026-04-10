@@ -1,17 +1,52 @@
-const { Client, LocalAuth } = require("whatsapp-web.js");
+const { Client, RemoteAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode");
+const { getDb } = require("./firebase");
+
+// ─── Firebase session store for RemoteAuth ────────────────────────────────────
+// Stores the zipped session as a base64 string in Firebase so it survives deploys.
+
+class FirebaseStore {
+  async sessionExists({ session }) {
+    const snap = await getDb().ref(`whatsapp-session/${session}`).once("value");
+    return snap.exists();
+  }
+
+  async save({ session, data }) {
+    // data is a Buffer (zip file)
+    const b64 = data.toString("base64");
+    await getDb().ref(`whatsapp-session/${session}`).set({ data: b64, savedAt: Date.now() });
+  }
+
+  async extract({ session }) {
+    const snap = await getDb().ref(`whatsapp-session/${session}`).once("value");
+    if (!snap.exists()) return null;
+    return Buffer.from(snap.val().data, "base64");
+  }
+
+  async delete({ session }) {
+    await getDb().ref(`whatsapp-session/${session}`).remove();
+  }
+}
+
+// ─── Client ───────────────────────────────────────────────────────────────────
 
 let client;
 let currentQRDataUrl = null;
 let isReady = false;
 
-function getClient() { return client; }
 function getCurrentQR() { return currentQRDataUrl; }
 function isClientReady() { return isReady; }
 
 async function initWhatsApp(onMessage) {
+  const store = new FirebaseStore();
+
   client = new Client({
-    authStrategy: new LocalAuth({ dataPath: "/data/.wwebjs_auth" }),
+    authStrategy: new RemoteAuth({
+      store,
+      clientId: "grocery-bot",
+      dataPath: "/tmp/.wwebjs_auth",
+      backupSyncIntervalMs: 60_000,   // save session to Firebase every 60s
+    }),
     puppeteer: {
       executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
       args: [
@@ -28,13 +63,17 @@ async function initWhatsApp(onMessage) {
   });
 
   client.on("qr", async (qr) => {
-    console.log("QR code received — visit /qr to scan it");
+    console.log("QR code ready — visit /qr to scan");
     currentQRDataUrl = await qrcode.toDataURL(qr);
     isReady = false;
   });
 
   client.on("authenticated", () => {
     console.log("WhatsApp authenticated ✓");
+  });
+
+  client.on("remote_session_saved", () => {
+    console.log("Session saved to Firebase ✓");
   });
 
   client.on("ready", () => {
