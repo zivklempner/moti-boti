@@ -92,6 +92,7 @@ async function clearPending(phone) {
 
 module.exports = {
   initFirebase,
+  getDb,
   getList,
   getListArray,
   addItem,
