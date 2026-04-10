@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "grocery": {
+      ".read": false,
+      ".write": false,
+      "items":   { ".read": "auth != null", ".write": "auth != null" },
+      "expenses":{ ".read": "auth != null", ".write": "auth != null" },
+      "pending": { ".read": "auth != null", ".write": "auth != null" },
+      "history": { ".read": "auth != null", ".write": "auth != null" }
+    },
+    "grocery-chat": {
+      "messages": {
+        ".read": true,
+        ".write": "auth != null"
+      }
+    }
+  }
+}
