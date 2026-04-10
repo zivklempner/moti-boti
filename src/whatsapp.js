@@ -11,7 +11,7 @@ function isClientReady() { return isReady; }
 
 async function initWhatsApp(onMessage) {
   client = new Client({
-    authStrategy: new LocalAuth({ dataPath: "/tmp/.wwebjs_auth" }),
+    authStrategy: new LocalAuth({ dataPath: "/data/.wwebjs_auth" }),
     puppeteer: {
       executablePath: process.env.CHROMIUM_PATH || "/usr/bin/chromium",
       args: [
