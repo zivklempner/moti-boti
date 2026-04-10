@@ -44,20 +44,28 @@ async function handleGroupMessage(msg) {
     const senderName = resolveName(authorPhone);
     const text = msg.body.trim();
 
-    console.log(`[${senderName}]: ${text}`);
+    console.log(`[${senderName}] from=${msg.from} author=${msg.author} type=${msg.type}: ${text}`);
 
     // Log to shared dashboard
     await logMessage(senderName, text, `+${authorPhone}`);
 
     // Process with Claude (history keyed by group ID so all members share context)
-    const reply = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
+    let reply;
+    try {
+      reply = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
+    } catch (err) {
+      console.error("processMessage error:", err.message, err.status || "", JSON.stringify(err.error || ""));
+      reply = "מצטער, משהו השתבש. נסה שוב.";
+    }
+
+    console.log(`Bot reply: ${reply.substring(0, 80)}`);
 
     // Log bot reply to dashboard
     await logMessage("Bot", reply);
 
     await sendToGroup(groupId, reply);
   } catch (err) {
-    console.error("Message handler error:", err.message);
+    console.error("Message handler error:", err.message, err.stack);
   }
 }
 
