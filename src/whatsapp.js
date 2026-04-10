@@ -1,47 +1,50 @@
 const { Client, RemoteAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode");
 const fs = require("fs");
-const AdmZip = require("adm-zip");
+const path = require("path");
 const { getDb } = require("./firebase");
 
 // ─── Firebase session store for RemoteAuth ────────────────────────────────────
-// RemoteAuth calls:
-//   save({ session: dirPath })   — dirPath is the session folder to zip+save
-//   extract({ session: name, path: destZipPath }) — write saved zip to destZipPath
-//   sessionExists({ session: name }) — true/false
+// RemoteAuth calls compressSession() first, producing a zip, THEN calls:
+//   save({ session: dirPath })        — dirPath is e.g. /tmp/.wwebjs_auth/RemoteAuth-grocery-bot
+//                                       the zip already exists at dirPath + '.zip'
+//   extract({ session: name,
+//             path: destZipPath })    — write the stored zip to destZipPath
+//   sessionExists({ session: name })  — name is e.g. "RemoteAuth-grocery-bot"
 //   delete({ session: name })
 
 class FirebaseStore {
-  _fbKey(name) {
-    // Firebase keys can't contain dots, slashes etc.
-    return `whatsapp-session/${name.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  _key(session) {
+    // session may be a full path or just a name — always use basename
+    return path.basename(session).replace(/[^a-zA-Z0-9_-]/g, "_");
   }
 
   async sessionExists({ session }) {
-    const snap = await getDb().ref(this._fbKey(session)).once("value");
+    const snap = await getDb().ref(`whatsapp-session/${this._key(session)}`).once("value");
     return snap.exists();
   }
 
   async save({ session }) {
-    // session = path to the session directory — zip it and store base64 in Firebase
-    const zip = new AdmZip();
-    zip.addLocalFolder(session);
-    const b64 = zip.toBuffer().toString("base64");
-    await getDb().ref(this._fbKey(session)).set({ data: b64, savedAt: Date.now() });
-    console.log(`Session saved to Firebase (${Math.round(b64.length / 1024)} KB)`);
+    // RemoteAuth already created session.zip — just read and store it
+    const zipPath = `${session}.zip`;
+    const data = fs.readFileSync(zipPath);
+    const b64 = data.toString("base64");
+    await getDb()
+      .ref(`whatsapp-session/${this._key(session)}`)
+      .set({ data: b64, savedAt: Date.now() });
+    console.log(`Session saved to Firebase ✓ (${Math.round(b64.length / 1024)} KB)`);
   }
 
   async extract({ session, path: destZipPath }) {
-    // session = session name, destZipPath = where to write the zip file
-    const snap = await getDb().ref(this._fbKey(session)).once("value");
-    if (!snap.exists()) throw new Error("No saved session found in Firebase");
+    const snap = await getDb().ref(`whatsapp-session/${this._key(session)}`).once("value");
+    if (!snap.exists()) throw new Error("No saved session in Firebase");
     const buf = Buffer.from(snap.val().data, "base64");
     fs.writeFileSync(destZipPath, buf);
-    console.log(`Session restored from Firebase (${Math.round(buf.length / 1024)} KB)`);
+    console.log(`Session restored from Firebase ✓ (${Math.round(buf.length / 1024)} KB)`);
   }
 
   async delete({ session }) {
-    await getDb().ref(this._fbKey(session)).remove();
+    await getDb().ref(`whatsapp-session/${this._key(session)}`).remove();
   }
 }
 
