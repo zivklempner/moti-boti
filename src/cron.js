@@ -1,12 +1,17 @@
 const cron = require("node-cron");
 const { getListArray } = require("./firebase");
 const { getMonthlyReport } = require("./expenses");
-const { send } = require("./twilio");
-const { getUsers } = require("./users");
+const { sendToGroup, isClientReady } = require("./whatsapp");
 
 // Every Sunday at 9:00 AM server time
 function startWeeklySummary() {
   cron.schedule("0 0 9 * * 0", async () => {
+    const groupId = process.env.WHATSAPP_GROUP_ID;
+    if (!groupId || !isClientReady()) {
+      console.log("Weekly summary skipped: bot not ready or no group configured.");
+      return;
+    }
+
     try {
       const now = new Date();
       const items = await getListArray();
@@ -37,9 +42,8 @@ function startWeeklySummary() {
 
       msg += `\n\nשבת שלום! 😊`;
 
-      const users = getUsers();
-      await Promise.all(users.map((u) => send(u.phone, msg)));
-      console.log("Weekly summary sent (Hebrew).");
+      await sendToGroup(groupId, msg);
+      console.log("Weekly summary sent to group.");
     } catch (err) {
       console.error("Weekly summary failed:", err.message);
     }

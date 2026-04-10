@@ -1,7 +1,6 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const fb = require("./firebase");
 const expenses = require("./expenses");
-const { send } = require("./twilio");
 const { getHistory, appendMessages } = require("./history");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -9,7 +8,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const SYSTEM_PROMPT = `You are a WhatsApp grocery assistant bot for an Israeli family. You MUST respond ONLY in Hebrew (עברית). Never use English in your responses, even if the user writes in English.
 
 You help with two things:
-1. Managing a shared grocery list (shared between both family members in real time)
+1. Managing a shared grocery list (shared between all family members in real time)
 2. Tracking grocery purchases and expenses by store, with monthly reports
 
 TOOLS AVAILABLE:
@@ -20,7 +19,6 @@ TOOLS AVAILABLE:
 - clear_grocery_list: Clear the entire list (ONLY after the user explicitly confirms — always ask first)
 - log_expense: Log a grocery purchase (store name + amount in NIS)
 - get_expense_report: Get monthly spending report by store
-- notify_other_user: Send a message to the other family member
 
 BEHAVIOR RULES:
 - Always respond in Hebrew only
@@ -29,9 +27,9 @@ BEHAVIOR RULES:
 - Format grocery list as numbered list with • for pending items and ✓ for bought items
 - Format amounts with ₪ symbol (e.g., 250 ₪)
 - For "clear list": ALWAYS ask for confirmation first, never clear without explicit "כן" from the user
-- When adding/marking/removing items, always call notify_other_user to inform the other family member in Hebrew
 - When logging an expense, confirm back with the store name and amount
-- For expense reports: show totals per store, grand total, and daily average`;
+- For expense reports: show totals per store, grand total, and daily average
+- You are in a group chat — all family members see your replies, no need to notify anyone separately`;
 
 const TOOLS = [
   {
@@ -120,20 +118,6 @@ const TOOLS = [
       required: ["year", "month"],
     },
   },
-  {
-    name: "notify_other_user",
-    description: "Send a WhatsApp notification message to the other family member",
-    input_schema: {
-      type: "object",
-      properties: {
-        message: {
-          type: "string",
-          description: "The Hebrew message to send to the other user",
-        },
-      },
-      required: ["message"],
-    },
-  },
 ];
 
 function resolveItem(items, query) {
@@ -147,12 +131,10 @@ function resolveItem(items, query) {
   );
 }
 
-async function executeTool(toolName, input, { me, other }) {
+async function executeTool(toolName, input, { me }) {
   switch (toolName) {
     case "add_grocery_items": {
-      for (const item of input.items) {
-        await fb.addItem(item);
-      }
+      for (const item of input.items) await fb.addItem(item);
       return { success: true, added: input.items };
     }
 
@@ -204,14 +186,7 @@ async function executeTool(toolName, input, { me, other }) {
     }
 
     case "get_expense_report": {
-      const report = await expenses.getMonthlyReport(input.year, input.month);
-      return report;
-    }
-
-    case "notify_other_user": {
-      if (!other) return { success: false, error: "No other user configured" };
-      await send(other.phone, input.message);
-      return { success: true };
+      return await expenses.getMonthlyReport(input.year, input.month);
     }
 
     default:
@@ -219,22 +194,21 @@ async function executeTool(toolName, input, { me, other }) {
   }
 }
 
-async function processMessage(text, me, other) {
-  const history = await getHistory(me.phone);
+// History is keyed by group ID (or phone for 1-on-1 fallback)
+async function processMessage(text, me, historyKey) {
+  const key = historyKey || me.phone;
+  const history = await getHistory(key);
 
   const now = new Date();
   const systemWithContext =
     SYSTEM_PROMPT +
-    `\n\nCURRENT USER: ${me.name} (${me.phone})` +
-    `\nOTHER USER: ${other ? `${other.name} (${other.phone})` : "not configured"}` +
-    `\nTODAY'S DATE: ${now.toISOString().split("T")[0]} (use this for expense logging when no date is given)`;
+    `\n\nCURRENT SENDER: ${me.name}` +
+    `\nTODAY'S DATE: ${now.toISOString().split("T")[0]}`;
 
-  const messages = [...history, { role: "user", content: text }];
-
+  const messages = [...history, { role: "user", content: `[${me.name}]: ${text}` }];
   let currentMessages = messages;
   let finalText = "";
 
-  // Agentic loop — keep going until Claude stops using tools
   for (let i = 0; i < 10; i++) {
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
@@ -254,30 +228,26 @@ async function processMessage(text, me, other) {
 
     if (response.stop_reason === "tool_use") {
       currentMessages = [...currentMessages, { role: "assistant", content: response.content }];
-
       const toolResults = [];
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
-        const result = await executeTool(block.name, block.input, { me, other });
+        const result = await executeTool(block.name, block.input, { me });
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
           content: JSON.stringify(result),
         });
       }
-
       currentMessages = [...currentMessages, { role: "user", content: toolResults }];
       continue;
     }
 
-    // Unexpected stop
     break;
   }
 
-  // Persist simplified history (no tool scaffolding — just the conversation)
   if (finalText) {
-    await appendMessages(me.phone, [
-      { role: "user", content: text },
+    await appendMessages(key, [
+      { role: "user", content: `[${me.name}]: ${text}` },
       { role: "assistant", content: finalText },
     ]);
   }
