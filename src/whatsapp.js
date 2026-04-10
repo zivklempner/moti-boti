@@ -1,30 +1,47 @@
 const { Client, RemoteAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode");
+const fs = require("fs");
+const AdmZip = require("adm-zip");
 const { getDb } = require("./firebase");
 
 // ─── Firebase session store for RemoteAuth ────────────────────────────────────
-// Stores the zipped session as a base64 string in Firebase so it survives deploys.
+// RemoteAuth calls:
+//   save({ session: dirPath })   — dirPath is the session folder to zip+save
+//   extract({ session: name, path: destZipPath }) — write saved zip to destZipPath
+//   sessionExists({ session: name }) — true/false
+//   delete({ session: name })
 
 class FirebaseStore {
+  _fbKey(name) {
+    // Firebase keys can't contain dots, slashes etc.
+    return `whatsapp-session/${name.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+  }
+
   async sessionExists({ session }) {
-    const snap = await getDb().ref(`whatsapp-session/${session}`).once("value");
+    const snap = await getDb().ref(this._fbKey(session)).once("value");
     return snap.exists();
   }
 
-  async save({ session, data }) {
-    // data is a Buffer (zip file)
-    const b64 = data.toString("base64");
-    await getDb().ref(`whatsapp-session/${session}`).set({ data: b64, savedAt: Date.now() });
+  async save({ session }) {
+    // session = path to the session directory — zip it and store base64 in Firebase
+    const zip = new AdmZip();
+    zip.addLocalFolder(session);
+    const b64 = zip.toBuffer().toString("base64");
+    await getDb().ref(this._fbKey(session)).set({ data: b64, savedAt: Date.now() });
+    console.log(`Session saved to Firebase (${Math.round(b64.length / 1024)} KB)`);
   }
 
-  async extract({ session }) {
-    const snap = await getDb().ref(`whatsapp-session/${session}`).once("value");
-    if (!snap.exists()) return null;
-    return Buffer.from(snap.val().data, "base64");
+  async extract({ session, path: destZipPath }) {
+    // session = session name, destZipPath = where to write the zip file
+    const snap = await getDb().ref(this._fbKey(session)).once("value");
+    if (!snap.exists()) throw new Error("No saved session found in Firebase");
+    const buf = Buffer.from(snap.val().data, "base64");
+    fs.writeFileSync(destZipPath, buf);
+    console.log(`Session restored from Firebase (${Math.round(buf.length / 1024)} KB)`);
   }
 
   async delete({ session }) {
-    await getDb().ref(`whatsapp-session/${session}`).remove();
+    await getDb().ref(this._fbKey(session)).remove();
   }
 }
 
