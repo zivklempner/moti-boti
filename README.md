@@ -1,36 +1,51 @@
-# 🛒 WhatsApp Grocery Bot
+# Moti Boti — Personal WhatsApp Assistant
 
-A shared grocery list for two people, powered by WhatsApp (Twilio sandbox), Firebase Realtime Database, and Node.js + Express. One person adds items; both see updates instantly.
+An AI-powered family assistant living inside a WhatsApp group. Built with Node.js, [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js), Claude (Anthropic Haiku), and Firebase Realtime Database. Deployed on Railway.
 
 ---
 
-## Table of contents
+## How it works
 
-1. [Project structure](#project-structure)
-2. [Local setup](#local-setup)
-3. [Set up the Twilio WhatsApp sandbox](#1-set-up-the-twilio-whatsapp-sandbox)
-4. [Set up Firebase Realtime Database](#2-set-up-firebase-realtime-database)
-5. [Deploy to Railway (free tier)](#3-deploy-to-railway-free-tier)
-6. [Point Twilio at your deployed URL](#4-point-twilio-at-your-deployed-url)
-7. [Add both phone numbers to the config](#5-add-both-phone-numbers-to-the-config)
-8. [Bot commands](#bot-commands)
-9. [Environment variables reference](#environment-variables-reference)
+1. A dedicated phone number (eSIM) runs the WhatsApp session linked to the bot.
+2. Every message sent to the family group is picked up by whatsapp-web.js.
+3. The message is passed to Claude (Haiku) with an agentic tool-use loop.
+4. Claude calls the appropriate tools (grocery list, expenses, calendar, etc.) and replies in Hebrew.
+
+No Twilio. No webhooks. The bot connects directly to WhatsApp via QR scan.
+
+---
+
+## Features
+
+| Feature | How to trigger |
+|---|---|
+| Grocery list — add, view, tick off, remove, clear | Natural Hebrew, e.g. "תוסיף חלב וביצים" |
+| Expense tracking — log purchases, monthly report | "הוצאתי 250 שקל בשופרסל" |
+| Receipt scanning — upload a PDF grocery receipt | Send the PDF file to the group |
+| Calendar invite — schedule events, get Google Calendar link | "תזמין פגישה עם אייל ביום שלישי ב-7 בערב" |
+| Urgent escalation — privately DM the other family member | Start the message with "דחוף" |
+| Weekly summary | Every Sunday 9 AM (Israel time), automatic |
+| Daily briefing | Every day 9 PM (Israel time), automatic |
 
 ---
 
 ## Project structure
 
 ```
-grocery-app/
+moti-boti/
 ├── src/
-│   ├── index.js      # Express server + webhook router
-│   ├── handlers.js   # Command logic (add, done, remove, clear, help…)
-│   ├── firebase.js   # Firebase Realtime Database helpers
-│   ├── twilio.js     # Twilio send / TwiML reply helpers
-│   ├── users.js      # Two-user config resolution
-│   └── cron.js       # Weekly summary (node-cron)
-├── .env.example      # Copy to .env and fill in your values
-├── .gitignore
+│   ├── index.js       # Express server, WhatsApp client bootstrap, message routing
+│   ├── claude.js      # Claude (Anthropic) agentic loop + tool definitions
+│   ├── whatsapp.js    # whatsapp-web.js client wrapper (send, QR, session)
+│   ├── firebase.js    # Firebase Realtime Database helpers (grocery list, session)
+│   ├── expenses.js    # Expense tracking (log + monthly report)
+│   ├── receipts.js    # Receipt storage and insights
+│   ├── calendar.js    # Google Calendar URL builder
+│   ├── history.js     # Conversation history (per group, stored in Firebase)
+│   ├── chat.js        # Chat logging helpers
+│   └── cron.js        # Scheduled tasks: weekly summary + daily briefing
+├── public/            # Static dashboard (served at /dashboard)
+├── .env.example       # Copy to .env and fill in your values
 ├── package.json
 └── README.md
 ```
@@ -40,181 +55,70 @@ grocery-app/
 ## Local setup
 
 ```bash
-# 1. Clone or download this repo
+# 1. Clone the repo
 git clone <your-repo-url>
-cd grocery-app
+cd moti-boti
 
 # 2. Install dependencies
 npm install
 
 # 3. Copy the env template and fill in your secrets
 cp .env.example .env
-# edit .env — see sections below for where to get each value
 
 # 4. Start locally (requires Node 18+)
-npm run dev        # uses nodemon for auto-reload
+npm run dev   # nodemon with auto-reload
 # or
 npm start
 ```
 
-To expose your local server to the internet for Twilio webhooks during development, use **ngrok**:
-
-```bash
-npx ngrok http 3000
-# copy the https://xxxx.ngrok.io URL — use it as your Twilio webhook
-```
+On first run, open `http://localhost:3000/qr` in a browser and scan the QR code with the **bot's WhatsApp number** (Linked Devices → Link a Device). The session is persisted to Firebase so you won't need to scan again after restarts.
 
 ---
 
-## 1. Set up the Twilio WhatsApp sandbox
+## Set up Firebase Realtime Database
 
-> The sandbox is free and requires no WhatsApp Business approval.
-
-1. Sign up at <https://www.twilio.com> (free account is fine).
-2. In the Twilio Console, go to **Messaging → Try it out → Send a WhatsApp message**.
-3. Note the **sandbox number** (usually `+1 415 523 8886`) and the **join code** (e.g. `join bright-elephant`).
-4. From **both** phones, send a WhatsApp message to `+1 415 523 8886` with the join code.
-   - Each phone must opt in separately — you have 72 hours before the session expires.
-5. From the Console, copy your **Account SID** and **Auth Token** (visible on the Dashboard).
-6. Add them to `.env`:
-   ```
-   TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   TWILIO_AUTH_TOKEN=your_auth_token_here
-   TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
-   ```
+1. Go to [console.firebase.google.com](https://console.firebase.google.com) and create a project.
+2. **Build → Realtime Database → Create database** (start in test mode).
+3. Generate a service account key:
+   - **Project settings** → **Service accounts → Generate new private key**
+   - Copy `project_id`, `client_email`, and `private_key` from the downloaded JSON.
+4. Add them to `.env` together with the database URL.
 
 ---
 
-## 2. Set up Firebase Realtime Database
+## Deploy to Railway
 
-1. Go to <https://console.firebase.google.com> and click **Add project**.
-2. Name it (e.g. `grocery-bot`), disable Google Analytics (optional), click **Create project**.
-3. In the left sidebar: **Build → Realtime Database → Create database**.
-   - Choose a region close to you.
-   - Start in **test mode** (you can lock it down later; the bot authenticates with a service account anyway).
-4. Copy the database URL — it looks like:
-   `https://grocery-bot-default-rtdb.firebaseio.com`
-5. Generate a service account key:
-   - Go to **Project settings** (gear icon) → **Service accounts**.
-   - Click **Generate new private key** → **Generate key**.
-   - A JSON file downloads. Open it and copy the three fields you need:
-     ```
-     "project_id"   → FIREBASE_PROJECT_ID
-     "client_email" → FIREBASE_CLIENT_EMAIL
-     "private_key"  → FIREBASE_PRIVATE_KEY  (the whole -----BEGIN … END----- block)
-     ```
-6. Add them to `.env`:
-   ```
-   FIREBASE_PROJECT_ID=grocery-bot
-   FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxx@grocery-bot.iam.gserviceaccount.com
-   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE…\n-----END PRIVATE KEY-----\n"
-   FIREBASE_DATABASE_URL=https://grocery-bot-default-rtdb.firebaseio.com
-   ```
-   > **Tip:** keep the entire private key on one line with literal `\n` characters — the app converts them back automatically.
-
----
-
-## 3. Deploy to Railway (free tier)
-
-Railway gives you a persistent free-tier service without sleeping (unlike Render's free tier, which sleeps after 15 min of inactivity — Railway is the better choice here).
-
-1. Push your code to a GitHub repo.
+1. Push your code to GitHub:
    ```bash
-   git init
-   git add .
-   git commit -m "initial commit"
-   gh repo create grocery-whatsapp-bot --public --source=. --push
+   git init && git add . && git commit -m "initial commit"
+   gh repo create moti-boti --public --source=. --push
    ```
-2. Go to <https://railway.app> and sign in with GitHub.
-3. Click **New Project → Deploy from GitHub repo** → select your repo.
-4. Railway detects `package.json` automatically and runs `npm start`.
-5. Add your environment variables:
-   - In your Railway project, click the service → **Variables** tab.
-   - Add every key from `.env.example` with your real values.
-   - Railway sets `PORT` automatically — you don't need to add it.
-6. Click **Deploy** (or it deploys automatically on every push).
-7. Once deployed, copy the generated domain from the **Settings → Domains** panel.
-   It will look like `https://grocery-whatsapp-bot-production.up.railway.app`.
-
----
-
-## 4. Point Twilio at your deployed URL
-
-1. In the Twilio Console, go to **Messaging → Try it out → Send a WhatsApp message**.
-2. Scroll to **Sandbox Configuration**.
-3. Set **"When a message comes in"** to:
+2. Go to [railway.app](https://railway.app), sign in with GitHub.
+3. **New Project → Deploy from GitHub repo** → select `moti-boti`.
+4. Railway detects `package.json` and runs `npm start` automatically.
+5. Add all environment variables under the service's **Variables** tab (`PORT` is set automatically).
+6. After deploy, open `https://<your-railway-domain>/qr` and scan the QR once to link the bot's WhatsApp.
+7. To find your family group ID: send any message to the group — Railway logs will print:
    ```
-   https://your-railway-domain.up.railway.app/webhook
+   Set this in Railway env vars:
+     WHATSAPP_GROUP_ID=1234567890-1234567890@g.us
    ```
-   Method: **HTTP POST**
-4. Click **Save**.
-
-That's it — Twilio will now POST every inbound WhatsApp message to your bot.
+   Add that value and redeploy.
 
 ---
 
-## 5. Add both phone numbers to the config
-
-Open `.env` and fill in the two phone numbers in E.164 format (country code + number, no spaces):
-
-```
-USER1_PHONE=+15551234567
-USER1_NAME=Me
-USER2_PHONE=+15559876543
-USER2_NAME=Spouse
-```
-
-- The bot matches the inbound `From` number against these two entries to identify who is messaging.
-- Any action by one user triggers a push notification to the other's number.
-- If a message arrives from an unregistered number, the bot replies with an error and ignores it.
-
-After changing `.env` locally: restart the server. On Railway: update the Variables panel and Railway redeploys automatically.
-
----
-
-## Bot commands
-
-| You send | What happens |
-|---|---|
-| `milk, eggs, bread` | Adds all three items |
-| `list` | Shows the full list with status |
-| `done 2` | Marks item #2 as bought |
-| `done eggs` | Marks "eggs" as bought (case-insensitive) |
-| `remove 3` | Deletes item #3 |
-| `remove bread` | Deletes "bread" (case-insensitive) |
-| `clear` | Asks for confirmation |
-| `YES` | Confirms a pending action (clear or add duplicate) |
-| `help` | Shows command reference |
-
-**List output format:**
-
-```
-1. • milk
-2. ✓ eggs (bought by Ziv)
-3. • bread
-```
-
-**Smart deduplication:** if you add an item already on the list, the bot warns you and waits for `YES` before adding again.
-
-**Real-time sync:** every action (add, done, remove, clear) instantly notifies the other user via WhatsApp.
-
-**Weekly summary:** every Sunday at 9 AM (server time) both users receive a count of pending vs. bought items.
-
----
-
-## Environment variables reference
+## Environment variables
 
 | Variable | Description |
 |---|---|
-| `TWILIO_ACCOUNT_SID` | From Twilio Console Dashboard |
-| `TWILIO_AUTH_TOKEN` | From Twilio Console Dashboard |
-| `TWILIO_WHATSAPP_NUMBER` | Sandbox number, prefixed with `whatsapp:` |
-| `USER1_PHONE` | First user's phone (E.164) |
+| `USER1_PHONE` | First user's phone in E.164 format (e.g. `+972501234567`) |
 | `USER1_NAME` | First user's display name |
-| `USER2_PHONE` | Second user's phone (E.164) |
+| `USER2_PHONE` | Second user's phone in E.164 format |
 | `USER2_NAME` | Second user's display name |
+| `WHATSAPP_GROUP_ID` | Family group ID (see deploy step 7 above) |
+| `ANTHROPIC_API_KEY` | From [console.anthropic.com](https://console.anthropic.com) |
 | `FIREBASE_PROJECT_ID` | From Firebase service account JSON |
 | `FIREBASE_CLIENT_EMAIL` | From Firebase service account JSON |
 | `FIREBASE_PRIVATE_KEY` | From Firebase service account JSON |
 | `FIREBASE_DATABASE_URL` | From Firebase Realtime Database settings |
-| `PORT` | Set automatically by Railway; defaults to 3000 locally |
+| `PORT` | Set automatically by Railway; defaults to `3000` locally |
