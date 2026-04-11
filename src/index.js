@@ -57,11 +57,12 @@ async function handleGroupMessage(msg) {
       await logMessage(senderName, `[קבלה PDF: ${msg.filename || "receipt.pdf"}]`, me.phone);
       try {
         const media = await msg.downloadMedia();
+        console.log(`PDF download: media=${!!media} data=${media ? media.data?.length : 0} mime=${media?.mimetype}`);
         if (!media || !media.data) throw new Error("Failed to download PDF");
         const result = await processReceiptPdf(media.data, me, groupId);
         replyText = result.text;
       } catch (err) {
-        console.error("processReceiptPdf error:", err.message);
+        console.error("processReceiptPdf error:", err.message, err.stack);
         replyText = "מצטער, לא הצלחתי לעבד את הקבלה. נסה שוב.";
       }
 
