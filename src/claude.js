@@ -396,9 +396,6 @@ async function executeTool(toolName, input, { me }) {
     }
 
     case "find_events": {
-      if (!process.env.DATABASE_URL) {
-        return { error: "Events database not configured (DATABASE_URL missing)" };
-      }
       const { searchEventsByAvailability } = require("./services/events");
       const rows = await searchEventsByAvailability({
         days_of_week: input.days_of_week,

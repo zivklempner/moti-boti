@@ -1,35 +1,50 @@
-const { query } = require("../db/postgres");
+const crypto = require("crypto");
+const { getDb } = require("../firebase");
+
+// Firebase path: events/{id}
+// ID = md5(title + date + location) — natural deduplication across scraper runs
+
+function eventId(title, date, location) {
+  return crypto
+    .createHash("md5")
+    .update(`${title}|${date}|${location || ""}`)
+    .digest("hex")
+    .substring(0, 16);
+}
 
 /**
- * Insert or update an event row.
- * Conflict target: (title, date, location) — updates time/link/source if row exists.
+ * Insert or overwrite an event in Firebase.
  */
 async function upsertEvent({ title, artist, date, time, city, location, source, link }) {
-  await query(
-    `INSERT INTO events (title, artist, date, time, city, location, source, link, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
-     ON CONFLICT (title, date, location) DO UPDATE
-       SET time       = EXCLUDED.time,
-           city       = EXCLUDED.city,
-           artist     = EXCLUDED.artist,
-           link       = EXCLUDED.link,
-           updated_at = NOW()`,
-    [title, artist || title, date, time || null, city || null, location || "", source, link || null]
-  );
+  const id = eventId(title, date, location);
+  await getDb().ref(`events/${id}`).set({
+    id,
+    title,
+    artist: artist || title,
+    date,           // "YYYY-MM-DD"
+    time:  time  || null,   // "HH:MM:SS" or null
+    city:  city  || null,
+    location: location || null,
+    source,
+    link:  link  || null,
+    updated_at: Date.now(),
+  });
 }
 
 /**
  * Search events by availability constraints.
  *
- * @param {object} constraints
- * @param {number[]}  [constraints.days_of_week]  0=Sun … 6=Sat
- * @param {string}    [constraints.date_from]      YYYY-MM-DD
- * @param {string}    [constraints.date_to]        YYYY-MM-DD
- * @param {string}    [constraints.time_from]      HH:MM
- * @param {string}    [constraints.city]           partial city name
- * @param {string[]}  [constraints.artists]        artist name fragments
- * @param {number}    [constraints.limit]          default 5
- * @returns {Promise<object[]>}
+ * Firebase has no SQL — we fetch events within the date range and filter in JS.
+ * For the typical "next 2 months" query this is at most a few hundred rows.
+ *
+ * @param {object} c
+ * @param {number[]}  [c.days_of_week]  0=Sun … 6=Sat
+ * @param {string}    [c.date_from]     YYYY-MM-DD  (default: today)
+ * @param {string}    [c.date_to]       YYYY-MM-DD  (default: 3 months ahead)
+ * @param {string}    [c.time_from]     HH:MM
+ * @param {string}    [c.city]          partial match
+ * @param {string[]}  [c.artists]       partial match
+ * @param {number}    [c.limit]         default 5
  */
 async function searchEventsByAvailability({
   days_of_week,
@@ -40,74 +55,73 @@ async function searchEventsByAvailability({
   artists,
   limit = 5,
 } = {}) {
-  const conditions = ["date >= CURRENT_DATE"];
-  const params = [];
-  let i = 1;
+  const today = new Date().toISOString().split("T")[0];
+  const from  = date_from || today;
+  const to    = date_to   || futureDate(90); // default: 3 months
 
+  // Fetch events in date range using Firebase orderByChild
+  const snap = await getDb()
+    .ref("events")
+    .orderByChild("date")
+    .startAt(from)
+    .endAt(to)
+    .once("value");
+
+  let events = Object.values(snap.val() || {});
+
+  // Filter: day of week
   if (days_of_week?.length > 0) {
-    conditions.push(`EXTRACT(DOW FROM date) = ANY($${i++})`);
-    params.push(days_of_week);
+    events = events.filter((ev) => {
+      const dow = new Date(ev.date + "T12:00:00Z").getUTCDay(); // 0=Sun
+      return days_of_week.includes(dow);
+    });
   }
 
-  if (date_from) {
-    conditions.push(`date >= $${i++}`);
-    params.push(date_from);
-  }
-
-  if (date_to) {
-    conditions.push(`date <= $${i++}`);
-    params.push(date_to);
-  }
-
+  // Filter: time_from — skip events that start before the requested time
   if (time_from) {
-    // include events with unknown time (NULL) so we don't silently drop them
-    conditions.push(`(time IS NULL OR time >= $${i++})`);
-    params.push(time_from + ":00");
+    const minTime = time_from.replace(":", ""); // "2000"
+    events = events.filter((ev) => {
+      if (!ev.time) return true; // unknown time — include
+      const evTime = ev.time.substring(0, 5).replace(":", ""); // "1930"
+      return parseInt(evTime) >= parseInt(minTime);
+    });
   }
 
+  // Filter: city (partial, case-insensitive)
   if (city) {
-    conditions.push(`city ILIKE $${i++}`);
-    params.push(`%${city}%`);
+    const c = city.toLowerCase();
+    events = events.filter(
+      (ev) =>
+        (ev.city     && ev.city.toLowerCase().includes(c)) ||
+        (ev.location && ev.location.toLowerCase().includes(c))
+    );
   }
 
+  // Filter: artists (any match)
   if (artists?.length > 0) {
-    const artistConds = artists.map(() => `(artist ILIKE $${i++} OR title ILIKE $${i - 1})`);
-    conditions.push(`(${artistConds.join(" OR ")})`);
-    params.push(...artists.map((a) => `%${a}%`));
+    events = events.filter((ev) =>
+      artists.some(
+        (a) =>
+          ev.artist?.toLowerCase().includes(a.toLowerCase()) ||
+          ev.title?.toLowerCase().includes(a.toLowerCase())
+      )
+    );
   }
 
-  params.push(limit);
+  // Sort by date asc, time asc
+  events.sort((a, b) => {
+    const d = a.date.localeCompare(b.date);
+    if (d !== 0) return d;
+    return (a.time || "99:99").localeCompare(b.time || "99:99");
+  });
 
-  const sql = `
-    SELECT id, title, artist, date, time, city, location, link
-    FROM events
-    WHERE ${conditions.join(" AND ")}
-    ORDER BY date ASC, time ASC NULLS LAST
-    LIMIT $${i}
-  `;
-
-  const { rows } = await query(sql, params);
-  return rows;
+  return events.slice(0, limit);
 }
 
-/**
- * Format a list of event rows into a short Hebrew string for the bot reply.
- * Caller can pass the raw rows directly.
- */
-function formatEvents(rows) {
-  if (rows.length === 0) return "לא מצאתי אירועים שמתאימים לתאריכים שנתת. נסה לשנות את הסינון?";
-
-  return rows
-    .map((ev) => {
-      const date = ev.date instanceof Date
-        ? ev.date.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit", year: "numeric" })
-        : String(ev.date).substring(0, 10).split("-").reverse().join("/");
-      const time = ev.time ? ` | ${ev.time.substring(0, 5)}` : "";
-      const city = ev.city ? ` | ${ev.city}` : "";
-      const link = ev.link ? `\n   🔗 ${ev.link}` : "";
-      return `🎭 *${ev.title}*\n   📅 ${date}${time}${city}${link}`;
-    })
-    .join("\n\n");
+function futureDate(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString().split("T")[0];
 }
 
-module.exports = { upsertEvent, searchEventsByAvailability, formatEvents };
+module.exports = { upsertEvent, searchEventsByAvailability };
