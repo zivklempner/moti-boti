@@ -264,13 +264,22 @@ async function processMessage(text, me, historyKey) {
       ),
     ]);
 
+  // Detect calendar intent to force the tool call on first turn
+  const calendarKeywords = ["זימון", "פגישה", "אירוע", "יומן", "תשלח זימון", "תקבע", "להזמין", "ארוחה", "meeting", "invite", "calendar"];
+  const isCalendarIntent = calendarKeywords.some(k => text.includes(k));
+
   for (let i = 0; i < 10; i++) {
+    const toolChoice = (i === 0 && isCalendarIntent)
+      ? { type: "tool", name: "send_calendar_invite" }
+      : { type: "auto" };
+
     const response = await withTimeout(
       client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 1024,
         system: systemWithContext,
         tools: TOOLS,
+        tool_choice: toolChoice,
         messages: currentMessages,
       }),
       30000,
