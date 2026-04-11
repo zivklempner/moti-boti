@@ -1,15 +1,17 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const fb = require("./firebase");
 const expenses = require("./expenses");
+const { sendCalendarInvite } = require("./calendar");
 const { getHistory, appendMessages } = require("./history");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const SYSTEM_PROMPT = `You are a WhatsApp grocery assistant bot for an Israeli family. You MUST respond ONLY in Hebrew (עברית). Never use English in your responses, even if the user writes in English.
 
-You help with two things:
+You help with three things:
 1. Managing a shared grocery list (shared between all family members in real time)
 2. Tracking grocery purchases and expenses by store, with monthly reports
+3. Sending calendar meeting invites to the family (Ziv and Tal) via email
 
 TOOLS AVAILABLE:
 - add_grocery_items: Add items to the shared list
@@ -19,6 +21,7 @@ TOOLS AVAILABLE:
 - clear_grocery_list: Clear the entire list (ONLY after the user explicitly confirms — always ask first)
 - log_expense: Log a grocery purchase (store name + amount in NIS)
 - get_expense_report: Get monthly spending report by store
+- send_calendar_invite: Send a calendar meeting invite by email to both Ziv and Tal
 
 BEHAVIOR RULES:
 - Always respond in Hebrew only
@@ -29,7 +32,8 @@ BEHAVIOR RULES:
 - For "clear list": ALWAYS ask for confirmation first, never clear without explicit "כן" from the user
 - When logging an expense, confirm back with the store name and amount
 - For expense reports: show totals per store, grand total, and daily average
-- You are in a group chat — all family members see your replies, no need to notify anyone separately`;
+- You are in a group chat — all family members see your replies, no need to notify anyone separately
+- For calendar invites: infer dates from Hebrew context (e.g. "ביום שלישי" = next Tuesday, "מחר" = tomorrow). Always confirm what you scheduled after sending.`;
 
 const TOOLS = [
   {
@@ -118,6 +122,36 @@ const TOOLS = [
       required: ["year", "month"],
     },
   },
+  {
+    name: "send_calendar_invite",
+    description: "Send a calendar meeting invite by email to both Ziv and Tal. Use this whenever someone asks to schedule a meeting, appointment, or event.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Event title in Hebrew, e.g. 'פגישה עם אייל'",
+        },
+        start_iso: {
+          type: "string",
+          description: "Start time in ISO 8601 format, e.g. '2026-04-15T19:00:00'. Infer the date from context (e.g. 'Tuesday' = next Tuesday). Use Israel timezone (UTC+3).",
+        },
+        end_iso: {
+          type: "string",
+          description: "End time in ISO 8601 format. If not specified, default to 1 hour after start.",
+        },
+        location: {
+          type: "string",
+          description: "Optional location or address",
+        },
+        organizer: {
+          type: "string",
+          description: "Name of the person organizing the meeting",
+        },
+      },
+      required: ["title", "start_iso"],
+    },
+  },
 ];
 
 function resolveItem(items, query) {
@@ -187,6 +221,19 @@ async function executeTool(toolName, input, { me }) {
 
     case "get_expense_report": {
       return await expenses.getMonthlyReport(input.year, input.month);
+    }
+
+    case "send_calendar_invite": {
+      const start = new Date(input.start_iso);
+      const end = input.end_iso ? new Date(input.end_iso) : null;
+      const result = await sendCalendarInvite({
+        title: input.title,
+        start,
+        end,
+        location: input.location || "",
+        organizer: input.organizer || me.name,
+      });
+      return { success: true, ...result };
     }
 
     default:
