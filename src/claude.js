@@ -232,8 +232,6 @@ async function executeTool(toolName, input, { me }) {
         end,
         location: input.location || "",
       });
-      // Store URL so processMessage can return it to the caller
-      pendingCalendarUrl = url;
       return { success: true, title: input.title, start_iso: input.start_iso, googleCalendarUrl: url };
     }
 
@@ -256,7 +254,7 @@ async function processMessage(text, me, historyKey) {
   const messages = [...history, { role: "user", content: `[${me.name}]: ${text}` }];
   let currentMessages = messages;
   let finalText = "";
-  let pendingCalendarUrl = null;
+  let calendarUrl = null;
 
   const withTimeout = (promise, ms, label) =>
     Promise.race([
@@ -305,6 +303,7 @@ async function processMessage(text, me, historyKey) {
           result = { success: false, error: toolErr.message };
         }
         console.log(`Tool result: ${block.name}:`, JSON.stringify(result).substring(0, 120));
+        if (result.googleCalendarUrl) calendarUrl = result.googleCalendarUrl;
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
@@ -325,7 +324,7 @@ async function processMessage(text, me, historyKey) {
     ]);
   }
 
-  return { text: finalText || "מצטער, משהו השתבש. נסה שוב.", calendarUrl: pendingCalendarUrl };
+  return { text: finalText || "מצטער, משהו השתבש. נסה שוב.", calendarUrl };
 }
 
 module.exports = { processMessage };
