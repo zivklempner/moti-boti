@@ -1,6 +1,11 @@
 const nodemailer = require("nodemailer");
 const ical = require("ical-generator");
 
+// ical-generator uses Web Crypto API — polyfill for Node 18
+if (typeof globalThis.crypto === "undefined") {
+  globalThis.crypto = require("crypto").webcrypto;
+}
+
 const ATTENDEES = [
   { name: "Ziv",  email: process.env.USER1_EMAIL || "ziv.klempner@gmail.com" },
   { name: "Tal",  email: process.env.USER2_EMAIL || "talmadar1906@gmail.com" },
