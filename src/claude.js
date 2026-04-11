@@ -412,9 +412,14 @@ async function processMessage(text, me, historyKey) {
   const calendarKeywords = ["זימון", "פגישה", "אירוע", "יומן", "תשלח זימון", "תקבע", "להזמין", "ארוחה", "meeting", "invite", "calendar"];
   const isCalendarIntent = calendarKeywords.some(k => text.includes(k));
 
+  // Detect expense intent — any message with a number + currency marker
+  const isExpenseIntent = !isCalendarIntent && /\d+\s*(₪|ש"ח|שח|שקל)/i.test(text);
+
   for (let i = 0; i < 10; i++) {
     const toolChoice = (i === 0 && isCalendarIntent)
       ? { type: "tool", name: "send_calendar_invite" }
+      : (i === 0 && isExpenseIntent)
+      ? { type: "tool", name: "log_expense" }
       : { type: "auto" };
 
     const response = await withTimeout(
