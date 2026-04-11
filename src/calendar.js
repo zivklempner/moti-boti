@@ -14,6 +14,10 @@ function buildGoogleCalendarUrl({ title, start, end, location }) {
     text: title,
     dates: `${fmt(start)}/${fmt(endTime)}`,
     details: "נוצר על ידי Moti Boti 🤖",
+    add: [
+      process.env.USER1_EMAIL || "ziv.klempner@gmail.com",
+      process.env.USER2_EMAIL || "talmadar1906@gmail.com",
+    ].join(","),
   });
 
   if (location) params.set("location", location);
