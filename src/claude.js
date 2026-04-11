@@ -1,7 +1,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const fb = require("./firebase");
 const expenses = require("./expenses");
-const { sendCalendarInvite } = require("./calendar");
+const { buildCalendarMedia } = require("./calendar");
 const { getHistory, appendMessages } = require("./history");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -226,14 +226,16 @@ async function executeTool(toolName, input, { me }) {
     case "send_calendar_invite": {
       const start = new Date(input.start_iso);
       const end = input.end_iso ? new Date(input.end_iso) : null;
-      const result = await sendCalendarInvite({
+      // Return the event details — the actual .ics file is sent by the message handler
+      return {
+        success: true,
         title: input.title,
-        start,
-        end,
+        start_iso: input.start_iso,
+        end_iso: input.end_iso || new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
         location: input.location || "",
         organizer: input.organizer || me.name,
-      });
-      return { success: true, ...result };
+        _sendIcs: true,  // flag for the caller
+      };
     }
 
     default:
@@ -255,6 +257,7 @@ async function processMessage(text, me, historyKey) {
   const messages = [...history, { role: "user", content: `[${me.name}]: ${text}` }];
   let currentMessages = messages;
   let finalText = "";
+  let calendarEvent = null;
 
   const withTimeout = (promise, ms, label) =>
     Promise.race([
@@ -285,7 +288,7 @@ async function processMessage(text, me, historyKey) {
       break;
     }
 
-    if (response.stop_reason === "tool_use") {
+      if (response.stop_reason === "tool_use") {
       currentMessages = [...currentMessages, { role: "assistant", content: response.content }];
       const toolResults = [];
       for (const block of response.content) {
@@ -303,10 +306,12 @@ async function processMessage(text, me, historyKey) {
           result = { success: false, error: toolErr.message };
         }
         console.log(`Tool result: ${block.name}:`, JSON.stringify(result).substring(0, 120));
+        // Capture calendar event for the caller to send as .ics
+        if (result._sendIcs) calendarEvent = result;
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
-          content: JSON.stringify(result),
+          content: JSON.stringify({ ...result, _sendIcs: undefined }),
         });
       }
       currentMessages = [...currentMessages, { role: "user", content: toolResults }];
@@ -323,7 +328,7 @@ async function processMessage(text, me, historyKey) {
     ]);
   }
 
-  return finalText || "מצטער, משהו השתבש. נסה שוב.";
+  return { text: finalText || "מצטער, משהו השתבש. נסה שוב.", calendarEvent };
 }
 
 module.exports = { processMessage };
