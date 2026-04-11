@@ -63,7 +63,6 @@ function currentMonthKey() {
  * @returns {Promise<object>} The saved expense object
  */
 async function logExpense(amount, merchant, paidBy, rawText = "", source = "whatsapp_message") {
-  console.log("logExpense called — GOOGLE_SHEETS_ID at call time:", process.env.GOOGLE_SHEETS_ID ? `set (${process.env.GOOGLE_SHEETS_ID.substring(0,8)}...)` : "NOT SET ❌");
   const { category, subcategory } = await resolveCategory(merchant);
 
   const now = nowIsrael();
@@ -93,19 +92,12 @@ async function logExpense(amount, merchant, paidBy, rawText = "", source = "what
     .ref(`expenses/${toMonthPath(year, month)}/${id}`)
     .set(expense);
 
-  // Blocking Sheets sync (temporary — for debugging)
-  if (!process.env.GOOGLE_SHEETS_ID) {
-    console.warn("Sheets sync skipped: GOOGLE_SHEETS_ID not set");
-  } else {
-    try {
-      console.log("Sheets sync starting...");
-      const { appendExpense } = require("./sheets");
-      await appendExpense(expense);
-      console.log(`Sheets sync ✓ (${expense.merchant} ${expense.amount}₪)`);
-    } catch (err) {
-      console.error("Sheets sync FAILED:", err.message);
-      console.error("Sheets sync error stack:", err.stack);
-    }
+  // Fire-and-forget Sheets sync — never blocks the bot reply
+  if (process.env.GOOGLE_SHEETS_ID) {
+    const { appendExpense } = require("./sheets");
+    appendExpense(expense)
+      .then(() => console.log(`Sheets sync ✓ (${expense.merchant} ${expense.amount}₪)`))
+      .catch((err) => console.error("Sheets sync failed:", err.message));
   }
 
   return expense;

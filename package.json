@@ -19,6 +19,9 @@
     "qrcode": "^1.5.4",
     "resend": "^6.10.0",
     "googleapis": "^144.0.0",
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0",
+    "pg": "^8.11.0",
     "uuid": "^9.0.0",
     "whatsapp-web.js": "^1.26.0"
   },

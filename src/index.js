@@ -117,9 +117,6 @@ async function handleGroupMessage(msg) {
 
 initFirebase();
 
-// Startup config check
-console.log("GOOGLE_SHEETS_ID:", process.env.GOOGLE_SHEETS_ID ? `set (${process.env.GOOGLE_SHEETS_ID.substring(0, 8)}...)` : "NOT SET ❌");
-
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());

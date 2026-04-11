@@ -3,6 +3,13 @@ const { getListArray, getDb } = require("./firebase");
 const { getMonthlyReport } = require("./expenses");
 const { sendToGroup, isClientReady } = require("./whatsapp");
 
+// Events scraper — only load if DATABASE_URL is configured
+function maybeRunScrapers() {
+  if (!process.env.DATABASE_URL) return;
+  const { runAllScrapers } = require("./scrapers/index");
+  runAllScrapers().catch((err) => console.error("Scraper cron failed:", err.message));
+}
+
 const hebrewMonths = [
   "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני",
   "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר",
@@ -107,9 +114,23 @@ function startDailyBriefing() {
   console.log("Daily briefing cron scheduled (9 PM Israel time).");
 }
 
+// Daily event scraper at 3 AM Israel time (00:00 UTC)
+function startEventScraper() {
+  if (!process.env.DATABASE_URL) {
+    console.log("Event scraper skipped: DATABASE_URL not set.");
+    return;
+  }
+  // Run once at startup to seed data
+  maybeRunScrapers();
+  // Then daily at 3 AM Israel time (UTC+3 → 00:00 UTC)
+  cron.schedule("0 0 0 * * *", maybeRunScrapers);
+  console.log("Event scraper cron scheduled (daily 3 AM Israel time).");
+}
+
 function startWeeklySummaryAndDailyBriefing() {
   startWeeklySummary();
   startDailyBriefing();
+  startEventScraper();
 }
 
 module.exports = { startWeeklySummary: startWeeklySummaryAndDailyBriefing };

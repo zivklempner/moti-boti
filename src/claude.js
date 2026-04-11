@@ -38,6 +38,7 @@ TOOLS AVAILABLE:
 - log_receipt: Save a fully parsed receipt with all line items (used after reading a PDF)
 - get_receipt_report: Get insights from stored receipts — top items, by store, by category, savings
 - send_calendar_invite: Send a calendar meeting invite by email to both Ziv and Tal
+- find_events: Search shows, concerts, standup, theater by available dates and preferences
 
 BEHAVIOR RULES:
 - Always respond in Hebrew only
@@ -56,6 +57,7 @@ BEHAVIOR RULES:
 - Expense reports: totals per merchant, grand total, daily average — add a one-liner observation
 - You are in a group chat — everyone sees your replies
 - For calendar invites: ALWAYS call send_calendar_invite tool. Never claim to send without calling the tool. Infer dates from Hebrew ("ביום שלישי" = next Tuesday, "מחר" = tomorrow). IMPORTANT: All times are Israel time (UTC+3 in summer). Always append +03:00 to start_iso and end_iso (e.g. "2026-04-15T19:00:00+03:00"). Confirm event details briefly after calling the tool.
+- For event searches: ALWAYS call find_events tool. Never invent shows. Parse the user's available days/times/preferences from the message and pass them as structured input. After the tool returns, list each event on its own line with date + time + location. If no events found, say so honestly. Offer to set a reminder or calendar invite for events they like.
 - If a message starts with "דחוף" — treat it as urgent and note that the other family member will be privately notified
 
 DAILY 9 PM BRIEFING STYLE (when called by the system):
@@ -237,6 +239,26 @@ const TOOLS = [
       required: ["title", "start_iso"],
     },
   },
+  {
+    name: "find_events",
+    description: "Search for shows, concerts, standup comedy, or theater events based on the user's available dates and preferences. Use when someone asks about events, shows, or what's on.",
+    input_schema: {
+      type: "object",
+      properties: {
+        days_of_week: {
+          type: "array",
+          items: { type: "number" },
+          description: "Days of week as numbers: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday",
+        },
+        date_from: { type: "string", description: "Start date YYYY-MM-DD" },
+        date_to:   { type: "string", description: "End date YYYY-MM-DD" },
+        time_from: { type: "string", description: "Earliest show start time HH:MM, e.g. '20:00'" },
+        city:      { type: "string", description: "City or area filter in Hebrew, e.g. 'תל אביב', 'מרכז'" },
+        artists:   { type: "array", items: { type: "string" }, description: "Specific artist names if mentioned" },
+      },
+      required: [],
+    },
+  },
 ];
 
 function resolveItem(items, query) {
@@ -371,6 +393,23 @@ async function executeTool(toolName, input, { me }) {
         location: input.location || "",
       });
       return { success: true, title: input.title, start_iso: input.start_iso, googleCalendarUrl: url };
+    }
+
+    case "find_events": {
+      if (!process.env.DATABASE_URL) {
+        return { error: "Events database not configured (DATABASE_URL missing)" };
+      }
+      const { searchEventsByAvailability } = require("./services/events");
+      const rows = await searchEventsByAvailability({
+        days_of_week: input.days_of_week,
+        date_from:    input.date_from,
+        date_to:      input.date_to,
+        time_from:    input.time_from,
+        city:         input.city,
+        artists:      input.artists,
+        limit:        5,
+      });
+      return { count: rows.length, events: rows };
     }
 
     default:
