@@ -51,9 +51,11 @@ async function handleGroupMessage(msg) {
     await logMessage(senderName, text, `+${authorPhone}`);
 
     // Process with Claude (history keyed by group ID so all members share context)
-    let replyText;
+    let replyText, calendarUrl;
     try {
-      replyText = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
+      const result = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
+      replyText = result.text;
+      calendarUrl = result.calendarUrl;
     } catch (err) {
       console.error("processMessage error:", err.message, err.status || "", JSON.stringify(err.error || ""));
       replyText = "מצטער, משהו השתבש. נסה שוב.";
@@ -62,6 +64,13 @@ async function handleGroupMessage(msg) {
     console.log(`Bot reply: ${replyText.substring(0, 80)}`);
     await logMessage("Bot", replyText);
     await sendToGroup(groupId, replyText);
+
+    // Always send calendar URL as a separate message so it's never missed
+    if (calendarUrl) {
+      const urlMsg = `📅 לחצו להוספה ליומן:\n${calendarUrl}`;
+      await logMessage("Bot", urlMsg);
+      await sendToGroup(groupId, urlMsg);
+    }
   } catch (err) {
     console.error("Message handler error:", err.message, err.stack);
   }
