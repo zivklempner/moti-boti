@@ -33,7 +33,7 @@ BEHAVIOR RULES:
 - When logging an expense, confirm back with the store name and amount
 - For expense reports: show totals per store, grand total, and daily average
 - You are in a group chat — all family members see your replies, no need to notify anyone separately
-- For calendar invites: ALWAYS call the send_calendar_invite tool — never say you sent an invite without actually calling the tool first. Infer dates from Hebrew context ("ביום שלישי" = next Tuesday, "מחר" = tomorrow). The code will automatically send the calendar link — you do NOT need to mention the URL or email in your reply, just confirm the event details briefly.`;
+- For calendar invites: ALWAYS call the send_calendar_invite tool — never say you sent an invite without actually calling the tool first. Infer dates from Hebrew context ("ביום שלישי" = next Tuesday, "מחר" = tomorrow). IMPORTANT: All times are in Israel time (UTC+3 in summer, UTC+2 in winter). Always append +03:00 to start_iso and end_iso (e.g. "2026-04-15T19:00:00+03:00"). The code will automatically send the calendar link — just confirm the event details briefly in your reply.`;
 
 const TOOLS = [
   {
@@ -246,10 +246,16 @@ async function processMessage(text, me, historyKey) {
   const history = await getHistory(key);
 
   const now = new Date();
+  // Israel time offset: IDT (summer) = UTC+3, IST (winter) = UTC+2
+  const israelOffset = "+03:00";
+  const israelNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const israelDateStr = israelNow.toISOString().split("T")[0];
+
   const systemWithContext =
     SYSTEM_PROMPT +
     `\n\nCURRENT SENDER: ${me.name}` +
-    `\nTODAY'S DATE: ${now.toISOString().split("T")[0]}`;
+    `\nTODAY'S DATE (Israel): ${israelDateStr}` +
+    `\nISRAEL TIMEZONE OFFSET: ${israelOffset} — always use this suffix on all ISO date strings for calendar invites`;
 
   const messages = [...history, { role: "user", content: `[${me.name}]: ${text}` }];
   let currentMessages = messages;
