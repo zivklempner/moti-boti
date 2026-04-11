@@ -5,7 +5,7 @@ const path = require("path");
 const { initFirebase } = require("./firebase");
 const { initWhatsApp, sendToGroup, getCurrentQR, isClientReady } = require("./whatsapp");
 const { processMessage } = require("./claude");
-const { buildCalendarMedia } = require("./calendar");
+
 const { logMessage } = require("./chat");
 const { startWeeklySummary } = require("./cron");
 
@@ -51,38 +51,17 @@ async function handleGroupMessage(msg) {
     await logMessage(senderName, text, `+${authorPhone}`);
 
     // Process with Claude (history keyed by group ID so all members share context)
-    let replyText, calendarEvent;
+    let replyText;
     try {
-      const result = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
-      replyText = result.text;
-      calendarEvent = result.calendarEvent;
+      replyText = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
     } catch (err) {
       console.error("processMessage error:", err.message, err.status || "", JSON.stringify(err.error || ""));
       replyText = "מצטער, משהו השתבש. נסה שוב.";
     }
 
     console.log(`Bot reply: ${replyText.substring(0, 80)}`);
-
-    // Send text reply
     await logMessage("Bot", replyText);
     await sendToGroup(groupId, replyText);
-
-    // Send .ics file if a calendar event was created
-    if (calendarEvent) {
-      try {
-        const { media } = await buildCalendarMedia({
-          title: calendarEvent.title,
-          start: new Date(calendarEvent.start_iso),
-          end: new Date(calendarEvent.end_iso),
-          location: calendarEvent.location,
-          organizer: calendarEvent.organizer,
-        });
-        await sendToGroup(groupId, media);
-        console.log(`Calendar .ics sent for: ${calendarEvent.title}`);
-      } catch (calErr) {
-        console.error("Failed to send .ics:", calErr.message);
-      }
-    }
   } catch (err) {
     console.error("Message handler error:", err.message, err.stack);
   }

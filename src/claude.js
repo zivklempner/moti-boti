@@ -1,7 +1,7 @@
 const Anthropic = require("@anthropic-ai/sdk");
 const fb = require("./firebase");
 const expenses = require("./expenses");
-const { buildCalendarMedia } = require("./calendar");
+const { buildGoogleCalendarUrl } = require("./calendar");
 const { getHistory, appendMessages } = require("./history");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -33,7 +33,7 @@ BEHAVIOR RULES:
 - When logging an expense, confirm back with the store name and amount
 - For expense reports: show totals per store, grand total, and daily average
 - You are in a group chat — all family members see your replies, no need to notify anyone separately
-- For calendar invites: infer dates from Hebrew context (e.g. "ביום שלישי" = next Tuesday, "מחר" = tomorrow). Always confirm what you scheduled after sending.`;
+- For calendar invites: infer dates from Hebrew context (e.g. "ביום שלישי" = next Tuesday, "מחר" = tomorrow). After the tool returns, include the googleCalendarUrl link in your reply so users can tap it to add the event to their calendar.`;
 
 const TOOLS = [
   {
@@ -226,16 +226,13 @@ async function executeTool(toolName, input, { me }) {
     case "send_calendar_invite": {
       const start = new Date(input.start_iso);
       const end = input.end_iso ? new Date(input.end_iso) : null;
-      // Return the event details — the actual .ics file is sent by the message handler
-      return {
-        success: true,
+      const url = buildGoogleCalendarUrl({
         title: input.title,
-        start_iso: input.start_iso,
-        end_iso: input.end_iso || new Date(start.getTime() + 60 * 60 * 1000).toISOString(),
+        start,
+        end,
         location: input.location || "",
-        organizer: input.organizer || me.name,
-        _sendIcs: true,  // flag for the caller
-      };
+      });
+      return { success: true, title: input.title, start_iso: input.start_iso, googleCalendarUrl: url };
     }
 
     default:
@@ -257,7 +254,6 @@ async function processMessage(text, me, historyKey) {
   const messages = [...history, { role: "user", content: `[${me.name}]: ${text}` }];
   let currentMessages = messages;
   let finalText = "";
-  let calendarEvent = null;
 
   const withTimeout = (promise, ms, label) =>
     Promise.race([
@@ -306,12 +302,10 @@ async function processMessage(text, me, historyKey) {
           result = { success: false, error: toolErr.message };
         }
         console.log(`Tool result: ${block.name}:`, JSON.stringify(result).substring(0, 120));
-        // Capture calendar event for the caller to send as .ics
-        if (result._sendIcs) calendarEvent = result;
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
-          content: JSON.stringify({ ...result, _sendIcs: undefined }),
+          content: JSON.stringify(result),
         });
       }
       currentMessages = [...currentMessages, { role: "user", content: toolResults }];
@@ -328,7 +322,7 @@ async function processMessage(text, me, historyKey) {
     ]);
   }
 
-  return { text: finalText || "מצטער, משהו השתבש. נסה שוב.", calendarEvent };
+  return finalText || "מצטער, משהו השתבש. נסה שוב.";
 }
 
 module.exports = { processMessage };
