@@ -93,13 +93,17 @@ async function logExpense(amount, merchant, paidBy, rawText = "", source = "what
     .set(expense);
 
   // Fire-and-forget Sheets sync — never blocks the bot reply
-  try {
-    const { appendExpense } = require("./sheets");
-    appendExpense(expense).catch((err) =>
-      console.error("Sheets sync failed:", err.message)
-    );
-  } catch (_) {
-    // sheets.js may not be configured; silently skip
+  if (!process.env.GOOGLE_SHEETS_ID) {
+    console.warn("Sheets sync skipped: GOOGLE_SHEETS_ID not set");
+  } else {
+    try {
+      const { appendExpense } = require("./sheets");
+      appendExpense(expense)
+        .then(() => console.log(`Sheets sync ✓ (${expense.merchant} ${expense.amount}₪)`))
+        .catch((err) => console.error("Sheets sync failed:", err.message));
+    } catch (err) {
+      console.error("Sheets require failed:", err.message);
+    }
   }
 
   return expense;
