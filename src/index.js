@@ -1,7 +1,6 @@
 require("dotenv").config();
 
 const express = require("express");
-const path = require("path");
 const { initFirebase } = require("./firebase");
 const { initWhatsApp, sendToGroup, sendDM, getCurrentQR, isClientReady } = require("./whatsapp");
 const { processMessage, processReceiptPdf } = require("./claude");
@@ -121,18 +120,6 @@ initFirebase();
 const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
-
-// Dashboard
-app.get("/dashboard/config.js", (_req, res) => {
-  res.type("application/javascript").send(`
-window.FIREBASE_CONFIG = {
-  projectId:   ${JSON.stringify(process.env.FIREBASE_PROJECT_ID)},
-  databaseURL: ${JSON.stringify(process.env.FIREBASE_DATABASE_URL)},
-  appId:       "moti-boti-dashboard"
-};
-  `.trim());
-});
-app.use("/dashboard", express.static(path.join(__dirname, "../public")));
 
 // QR code page
 app.get("/qr", (_req, res) => {

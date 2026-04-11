@@ -44,7 +44,6 @@ moti-boti/
 │   ├── history.js     # Conversation history (per group, stored in Firebase)
 │   ├── chat.js        # Chat logging helpers
 │   └── cron.js        # Scheduled tasks: weekly summary + daily briefing
-├── public/            # Static dashboard (served at /dashboard)
 ├── .env.example       # Copy to .env and fill in your values
 ├── package.json
 └── README.md
