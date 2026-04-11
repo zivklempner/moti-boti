@@ -3,8 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const path = require("path");
 const { initFirebase } = require("./firebase");
-const { initWhatsApp, sendToGroup, getCurrentQR, isClientReady } = require("./whatsapp");
-const { processMessage } = require("./claude");
+const { initWhatsApp, sendToGroup, sendDM, getCurrentQR, isClientReady } = require("./whatsapp");
+const { processMessage, processReceiptPdf } = require("./claude");
 
 const { logMessage } = require("./chat");
 const { startWeeklySummary } = require("./cron");
@@ -38,27 +38,65 @@ async function handleGroupMessage(msg) {
     }
 
     if (msg.from !== groupId) return;     // wrong group
-    if (msg.type !== "chat") return;      // ignore media/stickers/etc.
-    if (!msg.body?.trim()) return;
+    // Log all incoming message types for debugging
+    console.log(`MSG type=${msg.type} hasMedia=${msg.hasMedia} mime=${msg.mimetype} file=${msg.filename}`);
+    // Allow text messages and PDF documents
+    const isPdf = msg.type === "document" && msg.hasMedia &&
+      (msg.mimetype === "application/pdf" || (msg.filename || "").endsWith(".pdf"));
+    if (msg.type !== "chat" && !isPdf) return;
 
     const authorPhone = (msg.author || msg.from).replace("@c.us", "").replace("@g.us", "");
     const senderName = resolveName(authorPhone);
-    const text = msg.body.trim();
+    const me = { name: senderName, phone: `+${authorPhone}` };
 
-    console.log(`[${senderName}] from=${msg.from} author=${msg.author} type=${msg.type}: ${text}`);
+    console.log(`[${senderName}] from=${msg.from} type=${msg.type}${isPdf ? " (PDF)" : ""}`);
 
-    // Log to shared dashboard
-    await logMessage(senderName, text, `+${authorPhone}`);
-
-    // Process with Claude (history keyed by group ID so all members share context)
     let replyText, calendarUrl;
-    try {
-      const result = await processMessage(text, { name: senderName, phone: `+${authorPhone}` }, groupId);
-      replyText = result.text;
-      calendarUrl = result.calendarUrl;
-    } catch (err) {
-      console.error("processMessage error:", err.message, err.status || "", JSON.stringify(err.error || ""));
-      replyText = "מצטער, משהו השתבש. נסה שוב.";
+
+    // ── PDF receipt upload ────────────────────────────────────────────────────
+    if (isPdf) {
+      await logMessage(senderName, `[קבלה PDF: ${msg.filename || "receipt.pdf"}]`, me.phone);
+      try {
+        const media = await msg.downloadMedia();
+        if (!media || !media.data) throw new Error("Failed to download PDF");
+        const result = await processReceiptPdf(media.data, me, groupId);
+        replyText = result.text;
+      } catch (err) {
+        console.error("processReceiptPdf error:", err.message);
+        replyText = "מצטער, לא הצלחתי לעבד את הקבלה. נסה שוב.";
+      }
+
+    // ── Regular text message ──────────────────────────────────────────────────
+    } else {
+      const text = msg.body?.trim();
+      if (!text) return;
+
+      await logMessage(senderName, text, me.phone);
+
+      try {
+        const result = await processMessage(text, me, groupId);
+        replyText = result.text;
+        calendarUrl = result.calendarUrl;
+      } catch (err) {
+        console.error("processMessage error:", err.message, err.status || "", JSON.stringify(err.error || ""));
+        replyText = "מצטער, משהו השתבש. נסה שוב.";
+      }
+
+      // "דחוף" escalation — privately DM the OTHER family member
+      if (text.startsWith("דחוף")) {
+        const allPhones = [process.env.USER1_PHONE, process.env.USER2_PHONE].filter(Boolean);
+        const senderE164 = me.phone;
+        const otherPhone = allPhones.find((p) => p !== senderE164);
+        if (otherPhone) {
+          try {
+            const urgentDm = `🚨 *הודעה דחופה מ-${senderName}:*\n${text}`;
+            await sendDM(otherPhone, urgentDm);
+            console.log(`Urgent DM sent to ${otherPhone}`);
+          } catch (dmErr) {
+            console.error("Failed to send urgent DM:", dmErr.message);
+          }
+        }
+      }
     }
 
     console.log(`Bot reply: ${replyText.substring(0, 80)}`);

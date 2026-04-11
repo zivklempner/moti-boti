@@ -3,37 +3,58 @@ const fb = require("./firebase");
 const expenses = require("./expenses");
 const { buildGoogleCalendarUrl } = require("./calendar");
 const { getHistory, appendMessages } = require("./history");
+const { logReceipt, getReceiptReport } = require("./receipts");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are a WhatsApp grocery assistant bot for an Israeli family. You MUST respond ONLY in Hebrew (עברית). Never use English in your responses, even if the user writes in English.
+const SYSTEM_PROMPT = `You are "מוטי בוטי" (Moti Boti) — a witty, sharp, and highly efficient AI Family Assistant for an Israeli family (Ziv and Tal). You live inside their WhatsApp group. Your name is מוטי, and you can introduce yourself as such.
 
-You help with three things:
-1. Managing a shared grocery list (shared between all family members in real time)
-2. Tracking grocery purchases and expenses by store, with monthly reports
-3. Sending calendar meeting invites to the family (Ziv and Tal) via email
+LANGUAGE: Hebrew ONLY. Never use English, even if spoken to in English.
+
+PERSONALITY:
+- Sharp, confident, slightly cheeky — like a brilliant friend who happens to know everything
+- Warm underneath the wit — you genuinely care about this family
+- Efficient: no fluff, no filler. Get to the point with style.
+- Use dry humor and light sarcasm sparingly, never mean-spirited
+- Occasional self-aware robot jokes are fine
+
+CAPABILITIES:
+1. 🛒 Grocery list — add, view, mark done, remove, clear (with confirmation)
+2. 💰 Expense tracking — log purchases, monthly reports with commentary
+3. 🧾 Receipt scanning — parse uploaded PDF receipts, store all line items, show trends and insights
+4. 📅 Calendar invites — schedule events, send Google Calendar links
+5. 🚨 Urgent DM escalation — if message starts with "דחוף", privately alert the other family member
 
 TOOLS AVAILABLE:
 - add_grocery_items: Add items to the shared list
 - get_grocery_list: View the current list
 - mark_item_done: Mark an item as bought
 - remove_grocery_item: Remove an item
-- clear_grocery_list: Clear the entire list (ONLY after the user explicitly confirms — always ask first)
+- clear_grocery_list: Clear the entire list (ONLY after explicit confirmation — always ask first)
 - log_expense: Log a grocery purchase (store name + amount in NIS)
 - get_expense_report: Get monthly spending report by store
+- log_receipt: Save a fully parsed receipt with all line items (used after reading a PDF)
+- get_receipt_report: Get insights from stored receipts — top items, by store, by category, savings
 - send_calendar_invite: Send a calendar meeting invite by email to both Ziv and Tal
 
 BEHAVIOR RULES:
 - Always respond in Hebrew only
-- Be warm, friendly and concise
-- Use emojis sparingly: 🛒 🏪 📊 💰 ✓ •
-- Format grocery list as numbered list with • for pending items and ✓ for bought items
-- Format amounts with ₪ symbol (e.g., 250 ₪)
-- For "clear list": ALWAYS ask for confirmation first, never clear without explicit "כן" from the user
-- When logging an expense, confirm back with the store name and amount
-- For expense reports: show totals per store, grand total, and daily average
-- You are in a group chat — all family members see your replies, no need to notify anyone separately
-- For calendar invites: ALWAYS call the send_calendar_invite tool — never say you sent an invite without actually calling the tool first. Infer dates from Hebrew context ("ביום שלישי" = next Tuesday, "מחר" = tomorrow). IMPORTANT: All times are in Israel time (UTC+3 in summer, UTC+2 in winter). Always append +03:00 to start_iso and end_iso (e.g. "2026-04-15T19:00:00+03:00"). The code will automatically send the calendar link — just confirm the event details briefly in your reply.`;
+- Be concise and punchy — say what needs to be said, nothing more
+- Use emojis sparingly: 🛒 🏪 📊 💰 ✓ • 📅 🚨
+- Format grocery list: numbered, • for pending, ✓ for bought
+- Format amounts with ₪ (e.g., 250 ₪)
+- "ניקוי הרשימה": ALWAYS ask for confirmation first. Never clear without explicit "כן"
+- When logging expense: confirm with store + amount + a brief witty comment about spending habits
+- Expense reports: totals per store, grand total, daily average — add a one-liner observation
+- You are in a group chat — everyone sees your replies
+- For calendar invites: ALWAYS call send_calendar_invite tool. Never claim to send without calling the tool. Infer dates from Hebrew ("ביום שלישי" = next Tuesday, "מחר" = tomorrow). IMPORTANT: All times are Israel time (UTC+3 in summer). Always append +03:00 to start_iso and end_iso (e.g. "2026-04-15T19:00:00+03:00"). Confirm event details briefly after calling the tool.
+- If a message starts with "דחוף" — treat it as urgent and note that the other family member will be privately notified
+
+DAILY 9 PM BRIEFING STYLE (when called by the system):
+- Open with a punchy one-liner about the day
+- List pending grocery items (if any)
+- Note today's expenses (if any logged)
+- Close with a light quip about tomorrow or the family`;
 
 const TOOLS = [
   {
@@ -123,6 +144,51 @@ const TOOLS = [
     },
   },
   {
+    name: "log_receipt",
+    description: "Save a parsed grocery receipt to the database with all line items. Call this after extracting data from a receipt PDF.",
+    input_schema: {
+      type: "object",
+      properties: {
+        store: { type: "string", description: "Store/supermarket name in Hebrew, e.g. 'אושר עד'" },
+        branch: { type: "string", description: "Branch or location, if visible" },
+        date: { type: "string", description: "Purchase date in YYYY-MM-DD format" },
+        time: { type: "string", description: "Purchase time, e.g. '14:32'" },
+        total: { type: "number", description: "Total amount paid in NIS" },
+        discount: { type: "number", description: "Total discount/savings amount in NIS" },
+        paymentMethod: { type: "string", description: "Payment method, e.g. 'ויזה ****1234'" },
+        receiptNumber: { type: "string", description: "Receipt or transaction number if visible" },
+        items: {
+          type: "array",
+          description: "All line items on the receipt",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string", description: "Product name in Hebrew" },
+              qty: { type: "number", description: "Quantity purchased" },
+              unitPrice: { type: "number", description: "Price per unit in NIS" },
+              lineTotal: { type: "number", description: "Total for this line in NIS" },
+              category: { type: "string", description: "Category: dairy, produce, meat, bakery, frozen, cleaning, beverages, snacks, general" },
+            },
+            required: ["name", "lineTotal"],
+          },
+        },
+      },
+      required: ["store", "date", "total"],
+    },
+  },
+  {
+    name: "get_receipt_report",
+    description: "Get a detailed report of grocery receipts for a given month — spending by store, top purchased items, category breakdown, savings.",
+    input_schema: {
+      type: "object",
+      properties: {
+        year: { type: "number", description: "Year, e.g. 2026" },
+        month: { type: "number", description: "Month number 1-12" },
+      },
+      required: ["year", "month"],
+    },
+  },
+  {
     name: "send_calendar_invite",
     description: "Send a calendar meeting invite by email to both Ziv and Tal. Use this whenever someone asks to schedule a meeting, appointment, or event.",
     input_schema: {
@@ -134,11 +200,11 @@ const TOOLS = [
         },
         start_iso: {
           type: "string",
-          description: "Start time in ISO 8601 format, e.g. '2026-04-15T19:00:00'. Infer the date from context (e.g. 'Tuesday' = next Tuesday). Use Israel timezone (UTC+3).",
+          description: "Start time in ISO 8601 format with Israel timezone offset, e.g. '2026-04-15T19:00:00+03:00'. Infer the date from context (e.g. 'Tuesday' = next Tuesday). Always append +03:00.",
         },
         end_iso: {
           type: "string",
-          description: "End time in ISO 8601 format. If not specified, default to 1 hour after start.",
+          description: "End time in ISO 8601 format with +03:00 offset. If not specified, default to 1 hour after start.",
         },
         location: {
           type: "string",
@@ -223,6 +289,19 @@ async function executeTool(toolName, input, { me }) {
       return await expenses.getMonthlyReport(input.year, input.month);
     }
 
+    case "log_receipt": {
+      const today = new Date().toISOString().split("T")[0];
+      const key = await logReceipt(me.name, {
+        ...input,
+        date: input.date || today,
+      });
+      return { success: true, receiptId: key, store: input.store, date: input.date || today, total: input.total, itemCount: (input.items || []).length };
+    }
+
+    case "get_receipt_report": {
+      return await getReceiptReport(input.year, input.month);
+    }
+
     case "send_calendar_invite": {
       const start = new Date(input.start_iso);
       const end = input.end_iso ? new Date(input.end_iso) : null;
@@ -300,7 +379,7 @@ async function processMessage(text, me, historyKey) {
       break;
     }
 
-      if (response.stop_reason === "tool_use") {
+    if (response.stop_reason === "tool_use") {
       currentMessages = [...currentMessages, { role: "assistant", content: response.content }];
       const toolResults = [];
       for (const block of response.content) {
@@ -342,4 +421,112 @@ async function processMessage(text, me, historyKey) {
   return { text: finalText || "מצטער, משהו השתבש. נסה שוב.", calendarUrl };
 }
 
-module.exports = { processMessage };
+// Process an uploaded receipt PDF
+async function processReceiptPdf(pdfBase64, me, historyKey) {
+  const key = historyKey || me.phone;
+
+  const now = new Date();
+  const israelNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const israelDateStr = israelNow.toISOString().split("T")[0];
+
+  const receiptSystemPrompt =
+    `You are מוטי בוטי, a witty Hebrew family assistant. The user has sent you a grocery receipt PDF.
+Your job:
+1. Read the receipt carefully — extract store name, date, all line items (name, quantity, unit price, line total), discounts, total paid, payment method.
+2. Call the log_receipt tool to save it.
+3. Reply in Hebrew with a sharp, friendly summary: store, date, total, how many items, total savings if any, and one witty observation about what they bought.
+
+TODAY'S DATE (Israel): ${israelDateStr}
+CURRENT SENDER: ${me.name}
+
+Rules:
+- Hebrew only
+- Be concise and punchy
+- If you can't read the PDF clearly, say so in Hebrew and ask them to try again`;
+
+  const withTimeout = (promise, ms, label) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${label}`)), ms)
+      ),
+    ]);
+
+  const receiptTools = TOOLS.filter(t => ["log_receipt", "get_receipt_report"].includes(t.name));
+
+  const messages = [
+    {
+      role: "user",
+      content: [
+        {
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: pdfBase64 },
+        },
+        {
+          type: "text",
+          text: `[${me.name}]: תעבד את הקבלה הזו — חלץ את כל הפרטים ושמור אותה.`,
+        },
+      ],
+    },
+  ];
+
+  let currentMessages = messages;
+  let finalText = "";
+
+  for (let i = 0; i < 5; i++) {
+    const response = await withTimeout(
+      client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 2048,
+        system: receiptSystemPrompt,
+        tools: receiptTools,
+        tool_choice: i === 0 ? { type: "tool", name: "log_receipt" } : { type: "auto" },
+        messages: currentMessages,
+      }),
+      45000,
+      "Claude receipt API"
+    );
+
+    if (response.stop_reason === "end_turn") {
+      finalText = response.content
+        .filter((b) => b.type === "text")
+        .map((b) => b.text)
+        .join("");
+      break;
+    }
+
+    if (response.stop_reason === "tool_use") {
+      currentMessages = [...currentMessages, { role: "assistant", content: response.content }];
+      const toolResults = [];
+      for (const block of response.content) {
+        if (block.type !== "tool_use") continue;
+        console.log(`Receipt tool call: ${block.name}`, JSON.stringify(block.input).substring(0, 200));
+        let result;
+        try {
+          result = await withTimeout(
+            executeTool(block.name, block.input, { me }),
+            20000,
+            block.name
+          );
+        } catch (toolErr) {
+          console.error(`Receipt tool ${block.name} failed:`, toolErr.message);
+          result = { success: false, error: toolErr.message };
+        }
+        console.log(`Receipt tool result: ${block.name}:`, JSON.stringify(result).substring(0, 120));
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      currentMessages = [...currentMessages, { role: "user", content: toolResults }];
+      continue;
+    }
+
+    break;
+  }
+
+  return { text: finalText || "מצטער, לא הצלחתי לקרוא את הקבלה. נסה שוב." };
+}
+
+module.exports = { processMessage, processReceiptPdf };

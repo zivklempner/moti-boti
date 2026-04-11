@@ -119,4 +119,11 @@ async function sendToGroup(groupId, text) {
   await client.sendMessage(groupId, text);
 }
 
-module.exports = { initWhatsApp, sendToGroup, getCurrentQR, isClientReady };
+async function sendDM(phone, text) {
+  if (!isReady) throw new Error("WhatsApp client not ready");
+  // phone is E.164 e.g. +972507556620 → 972507556620@c.us
+  const chatId = phone.replace("+", "") + "@c.us";
+  await client.sendMessage(chatId, text);
+}
+
+module.exports = { initWhatsApp, sendToGroup, sendDM, getCurrentQR, isClientReady };
