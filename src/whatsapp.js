@@ -39,6 +39,8 @@ class FirebaseStore {
     const snap = await getDb().ref(`whatsapp-session/${this._key(session)}`).once("value");
     if (!snap.exists()) throw new Error("No saved session in Firebase");
     const buf = Buffer.from(snap.val().data, "base64");
+    // Ensure parent directory exists before writing
+    fs.mkdirSync(path.dirname(destZipPath), { recursive: true });
     fs.writeFileSync(destZipPath, buf);
     console.log(`Session restored from Firebase ✓ (${Math.round(buf.length / 1024)} KB)`);
   }
