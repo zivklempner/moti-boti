@@ -256,14 +256,26 @@ async function processMessage(text, me, historyKey) {
   let currentMessages = messages;
   let finalText = "";
 
+  const withTimeout = (promise, ms, label) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${label}`)), ms)
+      ),
+    ]);
+
   for (let i = 0; i < 10; i++) {
-    const response = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1024,
-      system: systemWithContext,
-      tools: TOOLS,
-      messages: currentMessages,
-    });
+    const response = await withTimeout(
+      client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 1024,
+        system: systemWithContext,
+        tools: TOOLS,
+        messages: currentMessages,
+      }),
+      30000,
+      "Claude API"
+    );
 
     if (response.stop_reason === "end_turn") {
       finalText = response.content
@@ -278,7 +290,19 @@ async function processMessage(text, me, historyKey) {
       const toolResults = [];
       for (const block of response.content) {
         if (block.type !== "tool_use") continue;
-        const result = await executeTool(block.name, block.input, { me });
+        console.log(`Tool call: ${block.name}`, JSON.stringify(block.input).substring(0, 120));
+        let result;
+        try {
+          result = await withTimeout(
+            executeTool(block.name, block.input, { me }),
+            20000,
+            block.name
+          );
+        } catch (toolErr) {
+          console.error(`Tool ${block.name} failed:`, toolErr.message);
+          result = { success: false, error: toolErr.message };
+        }
+        console.log(`Tool result: ${block.name}:`, JSON.stringify(result).substring(0, 120));
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,
