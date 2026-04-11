@@ -1,7 +1,7 @@
 {
-  "name": "grocery-whatsapp-bot",
+  "name": "moti-boti",
   "version": "1.0.0",
-  "description": "Shared grocery list bot via WhatsApp (Twilio + Firebase)",
+  "description": "Moti Boti — AI family assistant via WhatsApp",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

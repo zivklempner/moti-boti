@@ -2,7 +2,7 @@ const { getDb } = require("./firebase");
 
 async function logExpense(userName, { store, amount, date, category }) {
   const monthKey = date.substring(0, 7); // YYYY-MM
-  const ref = getDb().ref(`grocery/expenses/${monthKey}`).push();
+  const ref = getDb().ref(`moti-boti/expenses/${monthKey}`).push();
   await ref.set({
     store,
     amount: Number(amount),
@@ -16,7 +16,7 @@ async function logExpense(userName, { store, amount, date, category }) {
 
 async function getMonthlyReport(year, month) {
   const monthKey = `${year}-${String(month).padStart(2, "0")}`;
-  const snap = await getDb().ref(`grocery/expenses/${monthKey}`).once("value");
+  const snap = await getDb().ref(`moti-boti/expenses/${monthKey}`).once("value");
   const data = snap.val() || {};
 
   const byStore = {};

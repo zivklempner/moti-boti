@@ -6,11 +6,11 @@ const { getDb } = require("./firebase");
 
 // ─── Firebase session store for RemoteAuth ────────────────────────────────────
 // RemoteAuth calls compressSession() first, producing a zip, THEN calls:
-//   save({ session: dirPath })        — dirPath is e.g. /tmp/.wwebjs_auth/RemoteAuth-grocery-bot
+//   save({ session: dirPath })        — dirPath is e.g. /tmp/.wwebjs_auth/RemoteAuth-moti-boti
 //                                       the zip already exists at dirPath + '.zip'
 //   extract({ session: name,
 //             path: destZipPath })    — write the stored zip to destZipPath
-//   sessionExists({ session: name })  — name is e.g. "RemoteAuth-grocery-bot"
+//   sessionExists({ session: name })  — name is e.g. "RemoteAuth-moti-boti"
 //   delete({ session: name })
 
 class FirebaseStore {
@@ -65,7 +65,7 @@ async function initWhatsApp(onMessage) {
   client = new Client({
     authStrategy: new RemoteAuth({
       store,
-      clientId: "grocery-bot",
+      clientId: "moti-boti",
       dataPath: "/tmp/.wwebjs_auth",
       backupSyncIntervalMs: 60_000,   // save session to Firebase every 60s
     }),

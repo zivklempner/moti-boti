@@ -71,7 +71,7 @@ function startDailyBriefing() {
 
       // Today's expenses — fetch raw entries from Firebase
       const monthKey = todayStr.substring(0, 7);
-      const snap = await getDb().ref(`grocery/expenses/${monthKey}`).once("value");
+      const snap = await getDb().ref(`moti-boti/expenses/${monthKey}`).once("value");
       const expData = snap.val() || {};
       const todayExpenses = Object.values(expData).filter((e) => e.date === todayStr);
 

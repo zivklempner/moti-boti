@@ -128,7 +128,7 @@ app.get("/dashboard/config.js", (_req, res) => {
 window.FIREBASE_CONFIG = {
   projectId:   ${JSON.stringify(process.env.FIREBASE_PROJECT_ID)},
   databaseURL: ${JSON.stringify(process.env.FIREBASE_DATABASE_URL)},
-  appId:       "grocery-chat-dashboard"
+  appId:       "moti-boti-dashboard"
 };
   `.trim());
 });

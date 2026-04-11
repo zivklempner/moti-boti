@@ -8,7 +8,7 @@ function phoneToKey(phone) {
 
 async function getHistory(phone) {
   const snap = await getDb()
-    .ref(`grocery/history/${phoneToKey(phone)}`)
+    .ref(`moti-boti/history/${phoneToKey(phone)}`)
     .once("value");
   return snap.val() || [];
 }
@@ -20,7 +20,7 @@ async function appendMessages(phone, newMessages) {
     history = history.slice(history.length - MAX_MESSAGES);
   }
   await getDb()
-    .ref(`grocery/history/${phoneToKey(phone)}`)
+    .ref(`moti-boti/history/${phoneToKey(phone)}`)
     .set(history);
 }
 

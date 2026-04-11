@@ -26,7 +26,7 @@ function getDb() {
 // ─── List operations ──────────────────────────────────────────────────────────
 
 async function getList() {
-  const snap = await getDb().ref("grocery/items").once("value");
+  const snap = await getDb().ref("moti-boti/items").once("value");
   return snap.val() || {};
 }
 
@@ -42,13 +42,13 @@ async function getListArray() {
 }
 
 async function addItem(name) {
-  const ref = getDb().ref("grocery/items").push();
+  const ref = getDb().ref("moti-boti/items").push();
   await ref.set({ name, bought: false, boughtBy: null, addedAt: Date.now() });
   return ref.key;
 }
 
 async function markBought(id, buyerName) {
-  await getDb().ref(`grocery/items/${id}`).update({
+  await getDb().ref(`moti-boti/items/${id}`).update({
     bought: true,
     boughtBy: buyerName,
     boughtAt: Date.now(),
@@ -56,11 +56,11 @@ async function markBought(id, buyerName) {
 }
 
 async function removeItem(id) {
-  await getDb().ref(`grocery/items/${id}`).remove();
+  await getDb().ref(`moti-boti/items/${id}`).remove();
 }
 
 async function clearList() {
-  await getDb().ref("grocery/items").remove();
+  await getDb().ref("moti-boti/items").remove();
 }
 
 // ─── Pending-confirmation state ───────────────────────────────────────────────
@@ -69,13 +69,13 @@ async function clearList() {
 async function setPending(phone, data) {
   const key = phone.replace(/\+/g, "_plus_").replace(/:/g, "_colon_");
   await getDb()
-    .ref(`grocery/pending/${key}`)
+    .ref(`moti-boti/pending/${key}`)
     .set({ ...data, expiresAt: Date.now() + 60_000 });
 }
 
 async function getPending(phone) {
   const key = phone.replace(/\+/g, "_plus_").replace(/:/g, "_colon_");
-  const snap = await getDb().ref(`grocery/pending/${key}`).once("value");
+  const snap = await getDb().ref(`moti-boti/pending/${key}`).once("value");
   const data = snap.val();
   if (!data) return null;
   if (data.expiresAt < Date.now()) {
@@ -87,7 +87,7 @@ async function getPending(phone) {
 
 async function clearPending(phone) {
   const key = phone.replace(/\+/g, "_plus_").replace(/:/g, "_colon_");
-  await getDb().ref(`grocery/pending/${key}`).remove();
+  await getDb().ref(`moti-boti/pending/${key}`).remove();
 }
 
 module.exports = {
