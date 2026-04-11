@@ -41,8 +41,7 @@ async function handleGroupMessage(msg) {
     // Log all incoming message types for debugging
     console.log(`MSG type=${msg.type} hasMedia=${msg.hasMedia} mime=${msg.mimetype} file=${msg.filename}`);
     // Allow text messages and PDF documents
-    const isPdf = msg.type === "document" && msg.hasMedia &&
-      (msg.mimetype === "application/pdf" || (msg.filename || "").endsWith(".pdf"));
+    const isPdf = msg.type === "document" && msg.hasMedia;
     if (msg.type !== "chat" && !isPdf) return;
 
     const authorPhone = (msg.author || msg.from).replace("@c.us", "").replace("@g.us", "");
