@@ -63,6 +63,7 @@ function currentMonthKey() {
  * @returns {Promise<object>} The saved expense object
  */
 async function logExpense(amount, merchant, paidBy, rawText = "", source = "whatsapp_message") {
+  console.log("logExpense called — GOOGLE_SHEETS_ID at call time:", process.env.GOOGLE_SHEETS_ID ? `set (${process.env.GOOGLE_SHEETS_ID.substring(0,8)}...)` : "NOT SET ❌");
   const { category, subcategory } = await resolveCategory(merchant);
 
   const now = nowIsrael();
