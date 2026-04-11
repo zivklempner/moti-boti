@@ -156,6 +156,15 @@ app.listen(PORT, () => {
 });
 
 // Initialize WhatsApp client (non-blocking — server starts first)
-initWhatsApp(handleGroupMessage).catch((err) => {
-  console.error("WhatsApp init failed:", err.message);
+// Retry once on failure (e.g. bad saved session) so a fresh QR is generated
+initWhatsApp(handleGroupMessage).catch(async (err) => {
+  console.error("WhatsApp init failed:", err.message, "— clearing saved session and retrying...");
+  try {
+    const { getDb } = require("./firebase");
+    await getDb().ref("whatsapp-session").remove();
+    console.log("Cleared stale session from Firebase, restarting WhatsApp client...");
+    await initWhatsApp(handleGroupMessage);
+  } catch (err2) {
+    console.error("WhatsApp retry also failed:", err2.message);
+  }
 });
