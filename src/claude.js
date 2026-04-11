@@ -31,8 +31,10 @@ TOOLS AVAILABLE:
 - mark_item_done: Mark an item as bought
 - remove_grocery_item: Remove an item
 - clear_grocery_list: Clear the entire list (ONLY after explicit confirmation — always ask first)
-- log_expense: Log a grocery purchase (store name + amount in NIS)
-- get_expense_report: Get monthly spending report by store
+- log_expense: Log any expense (amount + merchant, paid_by inferred from sender)
+- get_expense_summary: Monthly totals per category with budget progress
+- get_balance: Balance between family members — who owes whom
+- get_expense_report: Detailed monthly spending report by merchant
 - log_receipt: Save a fully parsed receipt with all line items (used after reading a PDF)
 - get_receipt_report: Get insights from stored receipts — top items, by store, by category, savings
 - send_calendar_invite: Send a calendar meeting invite by email to both Ziv and Tal
@@ -44,8 +46,13 @@ BEHAVIOR RULES:
 - Format grocery list: numbered, • for pending, ✓ for bought
 - Format amounts with ₪ (e.g., 250 ₪)
 - "ניקוי הרשימה": ALWAYS ask for confirmation first. Never clear without explicit "כן"
-- When logging expense: confirm with store + amount + a brief witty comment about spending habits
-- Expense reports: totals per store, grand total, daily average — add a one-liner observation
+- When logging an expense, always reply in EXACTLY this format (no variations):
+  ✅ רשמתי: {amount} ש"ח ב{merchant}
+  📂 קטגוריה: {categoryNameHe} {categoryEmoji}
+  📊 {categoryNameHe} החודש: {categoryMonthlyTotal} ש"ח
+  Then add one short witty Hebrew comment about the spending.
+- Expense summary: per-category totals with progress vs. budget, plus grand total. Add a one-liner observation.
+- Expense reports: totals per merchant, grand total, daily average — add a one-liner observation
 - You are in a group chat — everyone sees your replies
 - For calendar invites: ALWAYS call send_calendar_invite tool. Never claim to send without calling the tool. Infer dates from Hebrew ("ביום שלישי" = next Tuesday, "מחר" = tomorrow). IMPORTANT: All times are Israel time (UTC+3 in summer). Always append +03:00 to start_iso and end_iso (e.g. "2026-04-15T19:00:00+03:00"). Confirm event details briefly after calling the tool.
 - If a message starts with "דחוף" — treat it as urgent and note that the other family member will be privately notified
@@ -113,31 +120,42 @@ const TOOLS = [
   },
   {
     name: "log_expense",
-    description: "Log a grocery purchase expense to the expense tracker",
+    description: "Log any household expense. Auto-categorizes by merchant name. Call whenever someone mentions spending money.",
     input_schema: {
       type: "object",
       properties: {
-        store: { type: "string", description: "Store or supermarket name" },
-        amount: { type: "number", description: "Amount spent in NIS (numbers only)" },
-        date: {
-          type: "string",
-          description: "Purchase date in YYYY-MM-DD format. Use today if not specified.",
-        },
-        category: {
-          type: "string",
-          description: "Optional category: dairy, produce, meat, bakery, general, etc.",
-        },
+        amount:    { type: "number", description: "Amount spent in NIS" },
+        merchant:  { type: "string", description: "Merchant or store name, in Hebrew if that's how it was said" },
+        paid_by:   { type: "string", description: "Name of who paid — infer from the message sender context" },
+        raw_text:  { type: "string", description: "The original message text verbatim" },
       },
-      required: ["store", "amount", "date"],
+      required: ["amount", "merchant"],
     },
   },
   {
-    name: "get_expense_report",
-    description: "Get monthly expense report showing spending broken down by store",
+    name: "get_expense_summary",
+    description: "Monthly spending summary with per-category totals and budget progress. Use for 'כמה הוצאנו החודש' and similar.",
     input_schema: {
       type: "object",
       properties: {
-        year: { type: "number", description: "Year, e.g. 2026" },
+        year:  { type: "number", description: "Year, e.g. 2026. Defaults to current year." },
+        month: { type: "number", description: "Month number 1-12. Defaults to current month." },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_balance",
+    description: "Expense balance between family members for the current month — who paid more and who owes whom.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "get_expense_report",
+    description: "Detailed monthly expense report broken down by merchant with totals and daily average.",
+    input_schema: {
+      type: "object",
+      properties: {
+        year:  { type: "number", description: "Year, e.g. 2026" },
         month: { type: "number", description: "Month number 1-12" },
       },
       required: ["year", "month"],
@@ -275,14 +293,54 @@ async function executeTool(toolName, input, { me }) {
     }
 
     case "log_expense": {
-      const today = new Date().toISOString().split("T")[0];
-      await expenses.logExpense(me.name, {
-        store: input.store,
-        amount: input.amount,
-        date: input.date || today,
-        category: input.category || "general",
-      });
-      return { success: true, store: input.store, amount: input.amount, date: input.date || today };
+      const expense = await expenses.logExpense(
+        input.amount,
+        input.merchant,
+        input.paid_by || me.name,
+        input.raw_text || "",
+        "whatsapp_message"
+      );
+      const monthKey = expenses.currentMonthKey();
+      const categoryTotal = await expenses.getCategoryTotal(monthKey, expense.category);
+      return {
+        success: true,
+        expense: {
+          id: expense.id,
+          merchant: expense.merchant,
+          amount: expense.amount,
+          category: expense.category,
+          subcategory: expense.subcategory,
+          paid_by: expense.paid_by,
+        },
+        categoryNameHe:       expenses.CATEGORY_NAMES_HE[expense.category] || expense.category,
+        categoryEmoji:        expenses.CATEGORY_EMOJIS[expense.category]   || "📦",
+        categoryMonthlyTotal: Math.round(categoryTotal),
+      };
+    }
+
+    case "get_expense_summary": {
+      const now = new Date();
+      const year  = input.year  || now.getFullYear();
+      const month = input.month || (now.getMonth() + 1);
+      const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+      const total = await expenses.getMonthlyTotal(monthKey);
+      const topMerchants = await expenses.getTopMerchants(monthKey, 5);
+      const categoryBreakdown = {};
+      for (const cat of Object.keys(expenses.CATEGORY_NAMES_HE)) {
+        const catTotal = await expenses.getCategoryTotal(monthKey, cat);
+        if (catTotal > 0) {
+          categoryBreakdown[cat] = {
+            nameHe: expenses.CATEGORY_NAMES_HE[cat],
+            emoji:  expenses.CATEGORY_EMOJIS[cat],
+            total:  Math.round(catTotal),
+          };
+        }
+      }
+      return { monthKey, total: Math.round(total), categoryBreakdown, topMerchants };
+    }
+
+    case "get_balance": {
+      return await expenses.getBalance();
     }
 
     case "get_expense_report": {
