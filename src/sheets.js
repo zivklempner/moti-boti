@@ -45,20 +45,30 @@ async function appendExpense(expense) {
 
   const sheets = authenticateSheets();
 
+  const CATEGORY_HE = {
+    groceries: "מכולת", food: "אוכל בחוץ", transport: "תחבורה",
+    health: "בריאות", kids: "ילדים", utilities: "חשבונות",
+    entertainment: "בידור", clothing: "ביגוד", home: "בית", other: "אחר",
+  };
+  const SOURCE_HE = {
+    whatsapp_message: "וואטסאפ", receipt_pdf: "קבלה",
+    test_script: "בדיקה", manual: "ידני",
+  };
+
   const date = expense.timestamp
     ? expense.timestamp.substring(0, 10) // YYYY-MM-DD
     : expense.month_key + "-01";
 
   const row = [
     date,
-    expense.merchant   || "",
-    expense.category   || "",
+    expense.merchant    || "",
+    CATEGORY_HE[expense.category]    || expense.category    || "",
     expense.subcategory || "",
-    expense.amount     || 0,
-    expense.currency   || "ILS",
-    expense.paid_by    || "",
-    expense.source     || "",
-    expense.id         || "",
+    expense.amount      || 0,
+    "₪",
+    expense.paid_by     || "",
+    SOURCE_HE[expense.source] || expense.source || "",
+    expense.id          || "",
   ];
 
   await sheets.spreadsheets.values.append({

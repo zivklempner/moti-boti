@@ -11,7 +11,7 @@ require("dotenv").config();
 const { google } = require("googleapis");
 
 const SHEET_ID = process.env.GOOGLE_SHEETS_ID;
-const HEADERS  = ["Date", "Merchant", "Category", "Subcategory", "Amount", "Currency", "Paid By", "Source", "ID"];
+const HEADERS  = ["תאריך", "עסק", "קטגוריה", "תת-קטגוריה", "סכום", "מטבע", "שולם על ידי", "מקור", "מזהה"];
 const SHARE_WITH = [
   process.env.SHARE_EMAIL_1,
   process.env.SHARE_EMAIL_2,
