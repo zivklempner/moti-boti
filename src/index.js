@@ -181,7 +181,7 @@ app.get("/", (_req, res) =>
 // One-time chart setup — call once from browser after deploy
 // GET /setup-charts  with  Authorization: Bearer <ADMIN_TOKEN>
 app.get("/setup-charts", async (req, res) => {
-  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  const token = req.query.token || (req.headers.authorization || "").replace("Bearer ", "").trim();
   if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
     return res.status(401).json({ error: "Unauthorized" });
   }
