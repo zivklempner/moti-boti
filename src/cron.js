@@ -60,7 +60,6 @@ function startWeeklySummary() {
 
 // Daily event scraper at 3 AM Israel time (UTC+3 → 00:00 UTC)
 function startEventScraper() {
-  maybeRunScrapers(); // seed on startup
   cron.schedule("0 0 0 * * *", maybeRunScrapers);
   console.log("Event scraper cron scheduled (daily 3 AM Israel time).");
 }
