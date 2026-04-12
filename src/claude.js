@@ -414,9 +414,15 @@ async function processMessage(text, me, historyKey) {
   const israelNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
   const israelDateStr = israelNow.toISOString().split("T")[0];
 
+  const FEMALE_NAMES = ["טל", "tal"];
+  const senderIsFemale = FEMALE_NAMES.includes((me.name || "").toLowerCase().trim());
+  const genderNote = senderIsFemale
+    ? "טל שולחת — פני אליה בלשון נקבה (את, קנית, שילמת, יש לך, וכו׳)"
+    : "זיו שולח — פנה אליו בלשון זכר (אתה, קנית, שילמת, יש לך, וכו׳)";
+
   const systemWithContext =
     SYSTEM_PROMPT +
-    `\n\nCURRENT SENDER: ${me.name}` +
+    `\n\nSENDER: ${me.name} — ${genderNote}` +
     `\nTODAY'S DATE (Israel): ${israelDateStr}` +
     `\nISRAEL TIMEZONE OFFSET: ${israelOffset} — always use this suffix on all ISO date strings for calendar invites`;
 
