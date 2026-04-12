@@ -178,6 +178,23 @@ app.get("/", (_req, res) =>
   res.json({ status: "ok", whatsapp: isClientReady() ? "connected" : "connecting" })
 );
 
+// One-time chart setup — call once from browser after deploy
+// GET /setup-charts  with  Authorization: Bearer <ADMIN_TOKEN>
+app.get("/setup-charts", async (req, res) => {
+  const token = (req.headers.authorization || "").replace("Bearer ", "").trim();
+  if (!process.env.ADMIN_TOKEN || token !== process.env.ADMIN_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  try {
+    const { setupCharts } = require("./sheets");
+    await setupCharts();
+    res.json({ success: true, message: "Charts created in the Charts tab" });
+  } catch (err) {
+    console.error("setup-charts failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
