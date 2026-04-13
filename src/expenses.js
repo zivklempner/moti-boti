@@ -231,6 +231,91 @@ async function getTopMerchants(monthKey, limit = 5) {
     .map((m) => ({ ...m, total: Math.round(m.total) }));
 }
 
+// ─── Edit ─────────────────────────────────────────────────────────────────────
+
+function getPrevMonthKey(monthKey) {
+  const [y, m] = monthKey.split("-").map(Number);
+  return m === 1
+    ? `${y - 1}-12`
+    : `${y}-${String(m - 1).padStart(2, "0")}`;
+}
+
+/**
+ * Search recent expenses across the current and previous month.
+ * @param {object} opts
+ * @param {string} [opts.merchantQuery] - Partial merchant name (case-insensitive)
+ * @param {string} [opts.dateFilter]    - Exact date prefix YYYY-MM-DD
+ * @param {number} [opts.limit]         - Max results (default 5)
+ * @returns {Promise<object[]>} Sorted newest-first
+ */
+async function findRecentExpenses({ merchantQuery, dateFilter, limit = 5 } = {}) {
+  const current = currentMonthKey();
+  const prev    = getPrevMonthKey(current);
+
+  const [a, b] = await Promise.all([
+    _getMonthExpenses(current),
+    _getMonthExpenses(prev),
+  ]);
+
+  let all = [...a, ...b];
+  all.sort((x, y) => (y.timestamp || "").localeCompare(x.timestamp || ""));
+
+  if (dateFilter) {
+    all = all.filter(e => (e.timestamp || "").startsWith(dateFilter));
+  }
+  if (merchantQuery) {
+    const q = merchantQuery.toLowerCase();
+    all = all.filter(e => (e.merchant || "").toLowerCase().includes(q));
+  }
+
+  return all.slice(0, limit);
+}
+
+/**
+ * Edit fields of an existing expense. Handles month-path migration when date changes.
+ * Re-categorizes automatically when merchant changes.
+ * @param {string} expenseId
+ * @param {string} originalMonthKey - "YYYY-MM" where the expense currently lives
+ * @param {object} updates          - Subset of { merchant, amount, date, paid_by }
+ * @returns {Promise<object>} Updated expense object
+ */
+async function editExpense(expenseId, originalMonthKey, updates) {
+  const { year, month } = parseMonthKey(originalMonthKey);
+  const ref = getDb().ref(`expenses/${toMonthPath(year, month)}/${expenseId}`);
+  const snap = await ref.once("value");
+
+  if (!snap.exists()) throw new Error(`Expense ${expenseId} not found in ${originalMonthKey}`);
+
+  const updated = { ...snap.val() };
+
+  if (updates.amount  !== undefined) updated.amount   = Number(updates.amount);
+  if (updates.paid_by !== undefined) updated.paid_by  = updates.paid_by;
+
+  if (updates.merchant !== undefined && updates.merchant !== updated.merchant) {
+    updated.merchant = updates.merchant;
+    const { category, subcategory } = await resolveCategory(updates.merchant);
+    updated.category    = category;
+    updated.subcategory = subcategory;
+  }
+
+  if (updates.date !== undefined) {
+    updated.timestamp = `${updates.date}T00:00:00+03:00`;
+    updated.month_key = updates.date.substring(0, 7);
+  }
+
+  const newMonthKey = updated.month_key;
+
+  if (newMonthKey !== originalMonthKey) {
+    const { year: ny, month: nm } = parseMonthKey(newMonthKey);
+    await ref.remove();
+    await getDb().ref(`expenses/${toMonthPath(ny, nm)}/${expenseId}`).set(updated);
+  } else {
+    await ref.set(updated);
+  }
+
+  return updated;
+}
+
 // ─── Backward-compat: used by cron.js ────────────────────────────────────────
 
 /**
@@ -271,6 +356,8 @@ async function getMonthlyReport(year, month) {
 
 module.exports = {
   logExpense,
+  findRecentExpenses,
+  editExpense,
   getMonthlyTotal,
   getCategoryTotal,
   getPersonTotal,

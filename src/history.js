@@ -24,4 +24,10 @@ async function appendMessages(phone, newMessages) {
     .set(history);
 }
 
-module.exports = { getHistory, appendMessages };
+async function clearHistory(phone) {
+  await getDb()
+    .ref(`moti-boti/history/${phoneToKey(phone)}`)
+    .remove();
+}
+
+module.exports = { getHistory, appendMessages, clearHistory };

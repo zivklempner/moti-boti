@@ -2,7 +2,7 @@ const Anthropic = require("@anthropic-ai/sdk");
 const fb = require("./firebase");
 const expenses = require("./expenses");
 const { buildGoogleCalendarUrl } = require("./calendar");
-const { getHistory, appendMessages } = require("./history");
+const { getHistory, appendMessages, clearHistory } = require("./history");
 const { logReceipt, getReceiptReport } = require("./receipts");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -27,6 +27,7 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
 - remove_grocery_item: למחוק פריט
 - clear_grocery_list: לנקות את כל הרשימה (רק אחרי אישור מפורש!)
 - log_expense: לרשום הוצאה
+- edit_expense: לתקן הוצאה קיימת (תאריך, סכום, חנות, מי שילם)
 - get_expense_summary: סיכום הוצאות לפי קטגוריה
 - get_balance: מי חייב למי ולמה
 - get_expense_report: דוח מפורט לפי חנות
@@ -45,6 +46,9 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
 כללים חשובים:
 - כשמדברים על קנייה או הוצאה — ALWAYS קרא ל-log_expense. אל תמציא את התוצאה. הכלי מחזיר את הקטגוריה והסכום החודשי האמיתי.
 - אם מציינים תאריך יחסי ("אתמול", "שלשום", "לפני שבוע") — חשב את התאריך האמיתי בפורמט YYYY-MM-DD על פי TODAY'S DATE שבקונטקסט, ושלח אותו כ-date ב-log_expense. אם לא מציינים תאריך — אל תשלח date (ייווצר אוטומטית כהיום).
+- אחרי edit_expense, ענה בדיוק בפורמט הזה:
+  ✏️ עדכנתי: {merchant} — {amount} ₪ ({date})
+  זהו. לא להוסיף הערות נוספות.
 - אחרי log_expense, ענה בדיוק בפורמט הזה:
   ✅ רשמתי: {amount} ₪ ב{merchant}
   📂 {categoryNameHe} {categoryEmoji}
@@ -131,6 +135,38 @@ const TOOLS = [
         date:      { type: "string", description: "Date of the expense in YYYY-MM-DD format. Use today's date unless the message mentions a different date (e.g. 'yesterday', 'אתמול', 'שלשום'). Always resolve relative dates to absolute dates using TODAY'S DATE from context." },
       },
       required: ["amount", "merchant"],
+    },
+  },
+  {
+    name: "edit_expense",
+    description: "Edit or correct an existing expense entry — wrong date, merchant name, amount, or paid_by. Searches the two most recent months. Use merchant_search and/or date_filter to identify the right entry.",
+    input_schema: {
+      type: "object",
+      properties: {
+        merchant_search: {
+          type: "string",
+          description: "Partial merchant name to find the expense (Hebrew or English, case-insensitive). Omit to match only by date or to get the most recent.",
+        },
+        date_filter: {
+          type: "string",
+          description: "YYYY-MM-DD — limit search to expenses on this date",
+        },
+        most_recent: {
+          type: "boolean",
+          description: "If true, edit the single most recent expense (respecting merchant_search/date_filter if given)",
+        },
+        updates: {
+          type: "object",
+          description: "Fields to change. Include only what needs updating.",
+          properties: {
+            merchant: { type: "string",  description: "New merchant/store name" },
+            amount:   { type: "number",  description: "New amount in NIS" },
+            date:     { type: "string",  description: "New date YYYY-MM-DD" },
+            paid_by:  { type: "string",  description: "New paid_by name" },
+          },
+        },
+      },
+      required: ["updates"],
     },
   },
   {
@@ -342,6 +378,46 @@ async function executeTool(toolName, input, { me }) {
       };
     }
 
+    case "edit_expense": {
+      const matches = await expenses.findRecentExpenses({
+        merchantQuery: input.merchant_search,
+        dateFilter:    input.date_filter,
+        limit: input.most_recent ? 1 : 5,
+      });
+
+      if (matches.length === 0) {
+        return { success: false, error: "לא נמצאה הוצאה תואמת לקריטריונים שנתת" };
+      }
+
+      if (matches.length > 1 && !input.most_recent) {
+        return {
+          success: false,
+          multiple_matches: true,
+          expenses: matches.map(e => ({
+            merchant: e.merchant,
+            amount:   e.amount,
+            date:     (e.timestamp || "").substring(0, 10),
+            paid_by:  e.paid_by,
+          })),
+          message: "נמצאו מספר הוצאות תואמות — ציין תאריך או שם חנות מדויק יותר כדי שאדע איזו לתקן",
+        };
+      }
+
+      const target  = matches[0];
+      const updated = await expenses.editExpense(target.id, target.month_key, input.updates);
+      return {
+        success: true,
+        expense: {
+          merchant: updated.merchant,
+          amount:   updated.amount,
+          date:     (updated.timestamp || "").substring(0, 10),
+          paid_by:  updated.paid_by,
+          category: updated.category,
+        },
+        categoryNameHe: expenses.CATEGORY_NAMES_HE[updated.category] || updated.category,
+      };
+    }
+
     case "get_expense_summary": {
       const now = new Date();
       const year  = input.year  || now.getFullYear();
@@ -462,6 +538,17 @@ async function processMessage(text, me, historyKey) {
   const eventKeywords = ["הופעה", "קונצרט", "סטנדאפ", "הצגה", "שואו", "כרטיסים", "ימי שני", "ימי שלישי", "ימי רביעי", "ימי חמישי", "ימי שישי", "מה יש לעשות", "להיות פנויים", "מה קורה", "אירועים"];
   const isEventsIntent = !isCalendarIntent && !isExpenseIntent && eventKeywords.some(k => text.includes(k));
 
+  // Detect expense edit intent
+  const isEditIntent = !isCalendarIntent && !isExpenseIntent && !isEventsIntent
+    && /תקן|ערוך|שנה|עדכן|תעדכן|תשנה|תתקן/.test(text)
+    && /הוצא|קבל|רשמת|רישום/.test(text);
+
+  // Clear history command — wipe stored conversation context
+  if (/נקה.*(שיחה|היסטוריה|זיכרון)|איפוס שיחה|reset.*(chat|history)/i.test(text)) {
+    await clearHistory(key);
+    return { text: "✅ מחקתי את ההיסטוריה של השיחה. מתחילים מחדש!" };
+  }
+
   for (let i = 0; i < 10; i++) {
     const toolChoice = (i === 0 && isCalendarIntent)
       ? { type: "tool", name: "send_calendar_invite" }
@@ -469,6 +556,8 @@ async function processMessage(text, me, historyKey) {
       ? { type: "tool", name: "log_expense" }
       : (i === 0 && isEventsIntent)
       ? { type: "tool", name: "find_events" }
+      : (i === 0 && isEditIntent)
+      ? { type: "tool", name: "edit_expense" }
       : { type: "auto" };
 
     const response = await withTimeout(
