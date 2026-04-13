@@ -562,7 +562,7 @@ async function processMessage(text, me, historyKey) {
 
     const response = await withTimeout(
       client.messages.create({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-sonnet-4-5-20251001",
         max_tokens: 1024,
         system: systemWithContext,
         tools: TOOLS,
@@ -678,7 +678,7 @@ Rules:
   for (let i = 0; i < 5; i++) {
     const response = await withTimeout(
       client.messages.create({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-sonnet-4-5-20251001",
         max_tokens: 2048,
         system: receiptSystemPrompt,
         tools: receiptTools,
@@ -753,7 +753,7 @@ async function processReceiptImage(base64Data, mimeType, me) {
   try {
     response = await withTimeout(
       client.messages.create({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-sonnet-4-5-20251001",
         max_tokens: 512,
         messages: [
           {
