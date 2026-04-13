@@ -4,6 +4,7 @@ const expenses = require("./expenses");
 const { buildGoogleCalendarUrl } = require("./calendar");
 const { getHistory, appendMessages, clearHistory } = require("./history");
 const { logReceipt, getReceiptReport } = require("./receipts");
+const { saveReminder } = require("./reminders");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -35,6 +36,7 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
 - get_receipt_report: תובנות מקבלות שנשמרו
 - send_calendar_invite: שליחת זימון ליומן גוגל
 - find_events: חיפוש הופעות, קונצרטים, סטנדאפ לפי תאריכים
+- set_reminder: לקבוע תזכורת לשעה מסוימת
 
 מה אתה תומך בו — עונה על שאלות על היכולות שלך לפי הרשימה הזו בלבד:
 - הודעות טקסט ✅
@@ -58,6 +60,7 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
 - לזימון יומן — ALWAYS קרא ל-send_calendar_invite. אל תגיד שזימנת בלי לקרוא לכלי. כל התאריכים בשעון ישראל (+03:00).
 - לחיפוש אירועים — ALWAYS קרא ל-find_events. אל תמציא הופעות. הצג את התוצאות בפורמט ברור עם תאריך, שעה ומיקום. אם אין תוצאות — תגיד את זה ישר. הצע לקבוע תזכורת לאירועים שמעניינים אותם.
 - אם ההודעה מתחילה ב"דחוף" — זה אורגנטי, הצד השני יקבל התראה פרטית.
+- לתזכורת — ALWAYS קרא ל-set_reminder. פרש תאריך/שעה יחסיים ("הלילה ב-21", "מחר בצהריים") לפי TODAY'S DATE. אחרי set_reminder ענה: ✅ תזכורת נקבעה ל-{שעה}: {טקסט}
 
 סגנון הבריפינג היומי (21:00):
 - פתח עם משפט אחד שמסכם את היום — לא בנאלי
@@ -293,6 +296,24 @@ const TOOLS = [
       required: [],
     },
   },
+  {
+    name: "set_reminder",
+    description: "Schedule a reminder message to be sent at a specific future time. Use when someone says 'תזכיר לי', 'remind me', 'תשלח לי תזכורת', etc.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "The reminder text to send — what to remind about, in Hebrew",
+        },
+        scheduled_iso: {
+          type: "string",
+          description: "When to send the reminder in ISO 8601 with Israel timezone (+03:00). Resolve relative times like 'הלילה ב-21:00' or 'מחר בצהריים' to absolute datetimes using TODAY'S DATE from context.",
+        },
+      },
+      required: ["text", "scheduled_iso"],
+    },
+  },
 ];
 
 function resolveItem(items, query) {
@@ -486,6 +507,21 @@ async function executeTool(toolName, input, { me }) {
       return { count: rows.length, events: rows };
     }
 
+    case "set_reminder": {
+      const groupId = process.env.WHATSAPP_GROUP_ID;
+      const reminder = await saveReminder({
+        text:         input.text,
+        scheduledIso: input.scheduled_iso,
+        createdBy:    me.name,
+        groupId,
+      });
+      return {
+        success:       true,
+        text:          reminder.text,
+        scheduled_iso: reminder.scheduled_iso,
+      };
+    }
+
     default:
       return { error: `Unknown tool: ${toolName}` };
   }
@@ -543,6 +579,10 @@ async function processMessage(text, me, historyKey) {
     && /תקן|ערוך|שנה|עדכן|תעדכן|תשנה|תתקן/.test(text)
     && /הוצא|קבל|רשמת|רישום/.test(text);
 
+  // Detect reminder intent
+  const isReminderIntent = !isCalendarIntent && !isExpenseIntent && !isEventsIntent && !isEditIntent
+    && /תזכיר|תזכור|תשלח תזכורת|remind/.test(text);
+
   // Clear history command — wipe stored conversation context
   if (/נקה.*(שיחה|היסטוריה|זיכרון)|איפוס שיחה|reset.*(chat|history)/i.test(text)) {
     await clearHistory(key);
@@ -558,6 +598,8 @@ async function processMessage(text, me, historyKey) {
       ? { type: "tool", name: "find_events" }
       : (i === 0 && isEditIntent)
       ? { type: "tool", name: "edit_expense" }
+      : (i === 0 && isReminderIntent)
+      ? { type: "tool", name: "set_reminder" }
       : { type: "auto" };
 
     const response = await withTimeout(

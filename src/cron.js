@@ -2,6 +2,7 @@ const cron = require("node-cron");
 const { getListArray } = require("./firebase");
 const { getMonthlyReport } = require("./expenses");
 const { sendToGroup, isClientReady } = require("./whatsapp");
+const { getDueReminders, markReminderSent } = require("./reminders");
 
 function maybeRunScrapers() {
   const { runAllScrapers } = require("./scrapers/index");
@@ -64,9 +65,32 @@ function startEventScraper() {
   console.log("Event scraper cron scheduled (daily 3 AM Israel time).");
 }
 
+// Check for due reminders every minute
+function startReminderCron() {
+  cron.schedule("* * * * *", async () => {
+    if (!isClientReady()) return;
+    try {
+      const due = await getDueReminders();
+      for (const r of due) {
+        try {
+          await sendToGroup(r.group_id, `🔔 *תזכורת מ-${r.created_by}:*\n${r.text}`);
+          await markReminderSent(r.id);
+          console.log(`Reminder sent: "${r.text.substring(0, 60)}"`);
+        } catch (err) {
+          console.error("Failed to send reminder:", err.message);
+        }
+      }
+    } catch (err) {
+      console.error("Reminder cron failed:", err.message);
+    }
+  });
+  console.log("Reminder cron scheduled (every minute).");
+}
+
 function startWeeklySummaryAndDailyBriefing() {
   startWeeklySummary();
   startEventScraper();
+  startReminderCron();
 }
 
 module.exports = { startWeeklySummary: startWeeklySummaryAndDailyBriefing };
