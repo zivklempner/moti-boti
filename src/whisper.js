@@ -1,4 +1,4 @@
-const OpenAI = require("openai");
+const { OpenAI, toFile } = require("openai");
 
 let _openai = null;
 
@@ -18,7 +18,7 @@ async function transcribeAudio(base64Data, mimeType) {
   const buffer = Buffer.from(base64Data, "base64");
 
   // toFile wraps the buffer so Whisper knows the filename/type
-  const file = await OpenAI.toFile(buffer, "voice.ogg", { type: mimeType || "audio/ogg" });
+  const file = await toFile(buffer, "voice.ogg", { type: mimeType || "audio/ogg" });
 
   const response = await openai.audio.transcriptions.create({
     file,
