@@ -3,7 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const { initFirebase } = require("./firebase");
 const { initWhatsApp, sendToGroup, sendDM, getCurrentQR, isClientReady } = require("./whatsapp");
-const { processMessage, processReceiptPdf } = require("./claude");
+const { processMessage, processReceiptPdf, processReceiptImage } = require("./claude");
+const { transcribeAudio } = require("./whisper");
 
 const { logMessage } = require("./chat");
 const { startWeeklySummary } = require("./cron");
@@ -18,6 +19,20 @@ function resolveName(phone) {
   // phone comes as "972507556620" (no +), normalize to +972...
   const e164 = phone.startsWith("+") ? phone : `+${phone}`;
   return PHONE_NAMES[e164] || phone;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function sendUrgentDm(senderName, senderE164, text) {
+  const allPhones = [process.env.USER1_PHONE, process.env.USER2_PHONE].filter(Boolean);
+  const otherPhone = allPhones.find((p) => p !== senderE164);
+  if (!otherPhone) return;
+  try {
+    await sendDM(otherPhone, `🚨 *הודעה דחופה מ-${senderName}:*\n${text}`);
+    console.log(`Urgent DM sent to ${otherPhone}`);
+  } catch (err) {
+    console.error("Failed to send urgent DM:", err.message);
+  }
 }
 
 // ─── Message handler ──────────────────────────────────────────────────────────
@@ -39,9 +54,11 @@ async function handleGroupMessage(msg) {
     if (msg.from !== groupId) return;     // wrong group
     // Log all incoming message types for debugging
     console.log(`MSG type=${msg.type} hasMedia=${msg.hasMedia} mime=${msg.mimetype} file=${msg.filename}`);
-    // Allow text messages and PDF documents
-    const isPdf = msg.type === "document" && msg.hasMedia;
-    if (msg.type !== "chat" && !isPdf) return;
+    // Allow text, PDF, images, and voice messages
+    const isPdf   = msg.type === "document" && msg.hasMedia;
+    const isImage = msg.type === "image"    && msg.hasMedia;
+    const isVoice = (msg.type === "ptt" || msg.type === "audio") && msg.hasMedia;
+    if (msg.type !== "chat" && !isPdf && !isImage && !isVoice) return;
 
     const authorPhone = (msg.author || msg.from).replace("@c.us", "").replace("@g.us", "").replace("@lid", "");
     let senderName = resolveName(authorPhone);
@@ -58,7 +75,8 @@ async function handleGroupMessage(msg) {
 
     const me = { name: senderName, phone: `+${authorPhone}` };
 
-    console.log(`[${senderName}] from=${msg.from} type=${msg.type}${isPdf ? " (PDF)" : ""}`);
+    const mediaTag = isPdf ? " (PDF)" : isImage ? " (image)" : isVoice ? " (voice)" : "";
+    console.log(`[${senderName}] from=${msg.from} type=${msg.type}${mediaTag}`);
 
     let replyText, calendarUrl;
 
@@ -74,6 +92,50 @@ async function handleGroupMessage(msg) {
       } catch (err) {
         console.error("processReceiptPdf error:", err.message, err.stack);
         replyText = "מצטער, לא הצלחתי לעבד את הקבלה. נסה שוב.";
+      }
+
+    // ── Image receipt upload ──────────────────────────────────────────────────
+    } else if (isImage) {
+      await logMessage(senderName, "[קבלה תמונה]", me.phone);
+      try {
+        const media = await msg.downloadMedia();
+        console.log(`Image download: media=${!!media} data=${media ? media.data?.length : 0} mime=${media?.mimetype}`);
+        if (!media || !media.data) throw new Error("Failed to download image");
+        const result = await processReceiptImage(media.data, media.mimetype, me);
+        replyText = result.text;
+      } catch (err) {
+        console.error("processReceiptImage error:", err.message, err.stack);
+        replyText = "מצטער, לא הצלחתי לעבד את התמונה. נסה שוב.";
+      }
+
+    // ── Voice message ─────────────────────────────────────────────────────────
+    } else if (isVoice) {
+      await logMessage(senderName, "[הודעה קולית]", me.phone);
+      if (!process.env.OPENAI_API_KEY) {
+        replyText = "קליטת הודעות קוליות עדיין לא מוגדרת. יש להגדיר OPENAI_API_KEY.";
+      } else {
+        try {
+          const media = await msg.downloadMedia();
+          if (!media || !media.data) throw new Error("Failed to download audio");
+          console.log(`Voice download: mime=${media.mimetype} size=${media.data?.length}`);
+          const transcript = await transcribeAudio(media.data, media.mimetype);
+          console.log(`Voice transcript: "${transcript}"`);
+          if (!transcript) {
+            replyText = "לא הצלחתי להבין את ההודעה הקולית. נסה שוב.";
+          } else {
+            await logMessage(senderName, `[קולי]: ${transcript}`, me.phone);
+            const result = await processMessage(transcript, me, groupId);
+            replyText = result.text;
+            calendarUrl = result.calendarUrl;
+            // "דחוף" escalation works on voice too
+            if (transcript.startsWith("דחוף")) {
+              await sendUrgentDm(senderName, me.phone, transcript);
+            }
+          }
+        } catch (err) {
+          console.error("Voice processing error:", err.message, err.stack);
+          replyText = "מצטער, לא הצלחתי לעבד את ההודעה הקולית.";
+        }
       }
 
     // ── Regular text message ──────────────────────────────────────────────────
@@ -94,18 +156,7 @@ async function handleGroupMessage(msg) {
 
       // "דחוף" escalation — privately DM the OTHER family member
       if (text.startsWith("דחוף")) {
-        const allPhones = [process.env.USER1_PHONE, process.env.USER2_PHONE].filter(Boolean);
-        const senderE164 = me.phone;
-        const otherPhone = allPhones.find((p) => p !== senderE164);
-        if (otherPhone) {
-          try {
-            const urgentDm = `🚨 *הודעה דחופה מ-${senderName}:*\n${text}`;
-            await sendDM(otherPhone, urgentDm);
-            console.log(`Urgent DM sent to ${otherPhone}`);
-          } catch (dmErr) {
-            console.error("Failed to send urgent DM:", dmErr.message);
-          }
-        }
+        await sendUrgentDm(senderName, me.phone, text);
       }
     }
 

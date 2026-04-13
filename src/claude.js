@@ -635,4 +635,105 @@ Rules:
   return { text: finalText || "מצטער, לא הצלחתי לקרוא את הקבלה. נסה שוב." };
 }
 
-module.exports = { processMessage, processReceiptPdf };
+// Process an uploaded receipt image (JPEG/PNG) via Claude vision
+async function processReceiptImage(base64Data, mimeType, me) {
+  const now = new Date();
+  const israelNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const israelDateStr = israelNow.toISOString().split("T")[0];
+
+  const withTimeout = (promise, ms, label) =>
+    Promise.race([
+      promise,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${ms}ms: ${label}`)), ms)
+      ),
+    ]);
+
+  // Normalise mime type — WhatsApp may send "image/jpeg" or "image/png"
+  const validMimes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+  const safeMime = validMimes.includes(mimeType) ? mimeType : "image/jpeg";
+
+  let response;
+  try {
+    response = await withTimeout(
+      client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 512,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: safeMime, data: base64Data },
+              },
+              {
+                type: "text",
+                text:
+                  `זוהי קבלה. חלץ ממנה בדיוק שלושה שדות:\n` +
+                  `1. שם העסק/חנות (merchant)\n` +
+                  `2. הסכום הכולל לתשלום בשקלים (amount) — המספר הסופי/הגדול ביותר\n` +
+                  `3. תאריך הקנייה (date) בפורמט YYYY-MM-DD — היום הוא ${israelDateStr}\n\n` +
+                  `ענה ב-JSON בלבד, ללא כל טקסט נוסף:\n` +
+                  `{"merchant":"שם","amount":123.45,"date":"YYYY-MM-DD"}\n\n` +
+                  `אם לא ניתן לקרוא שדה מסוים — השתמש ב-null.`,
+              },
+            ],
+          },
+        ],
+      }),
+      30000,
+      "Claude vision"
+    );
+  } catch (err) {
+    console.error("processReceiptImage vision call failed:", err.message);
+    return { text: "לא הצלחתי לקרוא את הקבלה. נסה לצלם שוב — וודא שהטקסט ברור ובפוקוס." };
+  }
+
+  const rawText = response.content
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("")
+    .trim();
+
+  let extracted = {};
+  try {
+    const jsonMatch = rawText.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
+  } catch (e) {
+    console.error("Receipt image JSON parse failed:", e.message, rawText);
+  }
+
+  console.log("Receipt image extracted:", JSON.stringify(extracted));
+
+  if (!extracted.merchant || !extracted.amount) {
+    return { text: "לא הצלחתי לזהות את פרטי הקבלה. נסה לצלם שוב בתאורה טובה יותר." };
+  }
+
+  const expense = await expenses.logExpense(
+    extracted.amount,
+    extracted.merchant,
+    me.name,
+    "[קבלה תמונה]",
+    "receipt_image",
+    extracted.date || null
+  );
+
+  const monthKey = extracted.date
+    ? extracted.date.substring(0, 7)
+    : expenses.currentMonthKey();
+  const categoryTotal = await expenses.getCategoryTotal(monthKey, expense.category);
+
+  const catHe    = expenses.CATEGORY_NAMES_HE[expense.category] || expense.category;
+  const catEmoji = expenses.CATEGORY_EMOJIS[expense.category]   || "📦";
+
+  return {
+    text:
+      `✅ רשמתי: ${expense.amount} ₪ ב${expense.merchant}` +
+      (extracted.date ? ` (${extracted.date})` : "") +
+      `\n📂 ${catHe} ${catEmoji}` +
+      `\n📊 ${catHe} החודש: ${Math.round(categoryTotal)} ₪`,
+  };
+}
+
+module.exports = { processMessage, processReceiptPdf, processReceiptImage };
