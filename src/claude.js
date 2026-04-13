@@ -536,7 +536,6 @@ async function processMessage(text, me, historyKey) {
   // Israel time offset: IDT (summer) = UTC+3, IST (winter) = UTC+2
   const israelOffset = "+03:00";
   const israelNow = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-  const israelDateStr = israelNow.toISOString().split("T")[0];
 
   const FEMALE_NAMES = ["טל", "tal"];
   const senderIsFemale = FEMALE_NAMES.includes((me.name || "").toLowerCase().trim());
@@ -544,11 +543,13 @@ async function processMessage(text, me, historyKey) {
     ? "טל שולחת — פני אליה בלשון נקבה (את, קנית, שילמת, יש לך, וכו׳)"
     : "זיו שולח — פנה אליו בלשון זכר (אתה, קנית, שילמת, יש לך, וכו׳)";
 
+  const israelTimeStr = israelNow.toISOString().replace("T", " ").substring(0, 16); // "YYYY-MM-DD HH:MM"
+
   const systemWithContext =
     SYSTEM_PROMPT +
     `\n\nSENDER: ${me.name} — ${genderNote}` +
-    `\nTODAY'S DATE (Israel): ${israelDateStr}` +
-    `\nISRAEL TIMEZONE OFFSET: ${israelOffset} — always use this suffix on all ISO date strings for calendar invites`;
+    `\nCURRENT DATE & TIME (Israel): ${israelTimeStr} (${israelOffset})` +
+    `\nISRAEL TIMEZONE OFFSET: ${israelOffset} — always use this suffix on all ISO date strings for calendar invites and reminders`;
 
   const messages = [...history, { role: "user", content: `[${me.name}]: ${text}` }];
   let currentMessages = messages;
