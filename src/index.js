@@ -133,7 +133,8 @@ async function handleGroupMessage(msg) {
             }
           }
         } catch (err) {
-          console.error("Voice processing error:", err.message, err.stack);
+          const detail = err.response?.data ? JSON.stringify(err.response.data) : (err.cause?.message || err.cause || "");
+          console.error("Voice processing error:", err.message, detail, err.stack);
           replyText = "מצטער, לא הצלחתי לעבד את ההודעה הקולית.";
         }
       }
