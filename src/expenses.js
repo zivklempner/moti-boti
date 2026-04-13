@@ -62,14 +62,22 @@ function currentMonthKey() {
  * @param {string} source - e.g. "whatsapp_message" or "receipt_pdf"
  * @returns {Promise<object>} The saved expense object
  */
-async function logExpense(amount, merchant, paidBy, rawText = "", source = "whatsapp_message") {
+async function logExpense(amount, merchant, paidBy, rawText = "", source = "whatsapp_message", dateOverride = null) {
   const { category, subcategory } = await resolveCategory(merchant);
 
-  const now = nowIsrael();
+  let timestamp, monthKey;
   const israelOffset = "+03:00";
-  const timestamp =
-    now.toISOString().replace("Z", "") + israelOffset;
-  const monthKey = currentMonthKey();
+
+  if (dateOverride) {
+    // dateOverride is YYYY-MM-DD — treat as midnight Israel time
+    timestamp = `${dateOverride}T00:00:00${israelOffset}`;
+    monthKey = dateOverride.substring(0, 7);
+  } else {
+    const now = nowIsrael();
+    timestamp = now.toISOString().replace("Z", "") + israelOffset;
+    monthKey = currentMonthKey();
+  }
+
   const { year, month } = parseMonthKey(monthKey);
 
   const id = uuidv4();

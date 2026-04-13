@@ -37,6 +37,7 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
 
 כללים חשובים:
 - כשמדברים על קנייה או הוצאה — ALWAYS קרא ל-log_expense. אל תמציא את התוצאה. הכלי מחזיר את הקטגוריה והסכום החודשי האמיתי.
+- אם מציינים תאריך יחסי ("אתמול", "שלשום", "לפני שבוע") — חשב את התאריך האמיתי בפורמט YYYY-MM-DD על פי TODAY'S DATE שבקונטקסט, ושלח אותו כ-date ב-log_expense. אם לא מציינים תאריך — אל תשלח date (ייווצר אוטומטית כהיום).
 - אחרי log_expense, ענה בדיוק בפורמט הזה:
   ✅ רשמתי: {amount} ₪ ב{merchant}
   📂 {categoryNameHe} {categoryEmoji}
@@ -120,6 +121,7 @@ const TOOLS = [
         merchant:  { type: "string", description: "Merchant or store name, in Hebrew if that's how it was said" },
         paid_by:   { type: "string", description: "Name of who paid — infer from the message sender context" },
         raw_text:  { type: "string", description: "The original message text verbatim" },
+        date:      { type: "string", description: "Date of the expense in YYYY-MM-DD format. Use today's date unless the message mentions a different date (e.g. 'yesterday', 'אתמול', 'שלשום'). Always resolve relative dates to absolute dates using TODAY'S DATE from context." },
       },
       required: ["amount", "merchant"],
     },
@@ -310,9 +312,12 @@ async function executeTool(toolName, input, { me }) {
         input.merchant,
         input.paid_by || me.name,
         input.raw_text || "",
-        "whatsapp_message"
+        "whatsapp_message",
+        input.date || null
       );
-      const monthKey = expenses.currentMonthKey();
+      const monthKey = input.date
+        ? input.date.substring(0, 7)
+        : expenses.currentMonthKey();
       const categoryTotal = await expenses.getCategoryTotal(monthKey, expense.category);
       return {
         success: true,

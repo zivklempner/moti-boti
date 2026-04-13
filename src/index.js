@@ -43,8 +43,19 @@ async function handleGroupMessage(msg) {
     const isPdf = msg.type === "document" && msg.hasMedia;
     if (msg.type !== "chat" && !isPdf) return;
 
-    const authorPhone = (msg.author || msg.from).replace("@c.us", "").replace("@g.us", "");
-    const senderName = resolveName(authorPhone);
+    const authorPhone = (msg.author || msg.from).replace("@c.us", "").replace("@g.us", "").replace("@lid", "");
+    let senderName = resolveName(authorPhone);
+
+    // Fallback for @lid format: WhatsApp anonymizes phone → match push name against configured names
+    if (senderName === authorPhone || senderName === `+${authorPhone}`) {
+      const pushName = (msg._data?.notifyName || msg._data?.pushName || "").trim();
+      if (pushName) {
+        const configuredNames = [process.env.USER1_NAME, process.env.USER2_NAME].filter(Boolean);
+        const matched = configuredNames.find(n => n.toLowerCase() === pushName.toLowerCase());
+        senderName = matched || pushName;
+      }
+    }
+
     const me = { name: senderName, phone: `+${authorPhone}` };
 
     console.log(`[${senderName}] from=${msg.from} type=${msg.type}${isPdf ? " (PDF)" : ""}`);

@@ -22,16 +22,16 @@ async function main() {
     console.error("❌  GOOGLE_SHEETS_ID is not set in .env");
     process.exit(1);
   }
-  if (!process.env.GOOGLE_SHEETS_CLIENT_EMAIL || !process.env.GOOGLE_SHEETS_PRIVATE_KEY) {
-    console.error("❌  GOOGLE_SHEETS_CLIENT_EMAIL / GOOGLE_SHEETS_PRIVATE_KEY not set in .env");
+  const client_email = process.env.GOOGLE_SHEETS_CLIENT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL;
+  const private_key  = (process.env.GOOGLE_SHEETS_PRIVATE_KEY || process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+
+  if (!client_email || !private_key) {
+    console.error("❌  No service account credentials found. Set GOOGLE_SHEETS_CLIENT_EMAIL / GOOGLE_SHEETS_PRIVATE_KEY (or FIREBASE_CLIENT_EMAIL / FIREBASE_PRIVATE_KEY) in .env");
     process.exit(1);
   }
 
   const auth = new google.auth.GoogleAuth({
-    credentials: {
-      client_email: process.env.GOOGLE_SHEETS_CLIENT_EMAIL,
-      private_key:  (process.env.GOOGLE_SHEETS_PRIVATE_KEY || "").replace(/\\n/g, "\n"),
-    },
+    credentials: { client_email, private_key },
     scopes: [
       "https://www.googleapis.com/auth/spreadsheets",
       "https://www.googleapis.com/auth/drive",
