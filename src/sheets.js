@@ -431,4 +431,67 @@ async function appendExpense(expense) {
     .catch(err => console.error("Sheets refresh failed:", err.message));
 }
 
-module.exports = { authenticateSheets, appendExpense, setupCharts };
+/**
+ * Find an existing expense row by its ID (column I) and overwrite it in-place.
+ * Also fires background refreshes of the summary tabs.
+ *
+ * @param {object} expense - Updated expense object (must have .id)
+ * @returns {Promise<void>}
+ */
+async function updateExpenseRow(expense) {
+  const sheetId = process.env.GOOGLE_SHEETS_ID;
+  if (!sheetId) return;
+
+  const sheets = authenticateSheets();
+
+  // Read all raw rows to locate the row by ID (column I, index 8)
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: "Raw!A2:I",
+    valueRenderOption: "UNFORMATTED_VALUE",
+  });
+
+  const rows = resp.data.values || [];
+  const rowIndex = rows.findIndex(r => r[8] === expense.id);
+
+  if (rowIndex === -1) {
+    console.warn(`Sheets updateExpenseRow: ID ${expense.id} not found in Raw tab — skipping`);
+    return;
+  }
+
+  // Sheet rows are 1-indexed; row 1 is the header, data starts at row 2
+  const sheetRow = rowIndex + 2;
+
+  const date = expense.timestamp
+    ? expense.timestamp.substring(0, 10)
+    : expense.month_key + "-01";
+
+  const updatedRow = [
+    date,
+    expense.merchant    || "",
+    CATEGORY_HE[expense.category]    || expense.category    || "",
+    expense.subcategory || "",
+    expense.amount      || 0,
+    "₪",
+    expense.paid_by     || "",
+    SOURCE_HE[expense.source] || expense.source || "",
+    expense.id          || "",
+  ];
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: sheetId,
+    range:          `Raw!A${sheetRow}:I${sheetRow}`,
+    valueInputOption: "USER_ENTERED",
+    requestBody: { values: [updatedRow] },
+  });
+
+  // Fire-and-forget: rebuild summary tabs
+  const monthKey = expense.month_key || date.substring(0, 7);
+  Promise.all([
+    refreshPerStoreTab(sheets, sheetId),
+    refreshMonthlyTab(sheets, sheetId, monthKey),
+  ]).then(() => console.log(`Sheets update ✓ (edit: ${expense.merchant} ${expense.amount}₪)`))
+    .catch(err => console.error("Sheets refresh after edit failed:", err.message));
+}
+
+module.exports = { authenticateSheets, appendExpense, updateExpenseRow, setupCharts };

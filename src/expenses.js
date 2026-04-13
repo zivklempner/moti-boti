@@ -313,6 +313,13 @@ async function editExpense(expenseId, originalMonthKey, updates) {
     await ref.set(updated);
   }
 
+  // Fire-and-forget Sheets update — finds the row by ID and overwrites it
+  if (process.env.GOOGLE_SHEETS_ID) {
+    const { updateExpenseRow } = require("./sheets");
+    updateExpenseRow(updated)
+      .catch(err => console.error("Sheets edit sync failed:", err.message));
+  }
+
   return updated;
 }
 
