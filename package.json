@@ -2,7 +2,7 @@
   "name": "moti-boti",
   "version": "1.0.0",
   "description": "Moti Boti — AI family assistant via WhatsApp",
-  "main": "src/index.js",
+  "main": "index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js"
