@@ -508,7 +508,7 @@ async function executeTool(toolName, input, { me }) {
     }
 
     case "set_reminder": {
-      const groupId = process.env.WHATSAPP_GROUP_ID;
+      const groupId = process.env.TELEGRAM_CHAT_ID || process.env.WHATSAPP_GROUP_ID;
       const reminder = await saveReminder({
         text:         input.text,
         scheduledIso: input.scheduled_iso,
