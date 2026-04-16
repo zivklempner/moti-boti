@@ -5,3 +5,4 @@ node_modules/
 *.json.key
 *firebase-adminsdk*.json
 .claude/
+.env.yaml

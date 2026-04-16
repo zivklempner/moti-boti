@@ -5,17 +5,19 @@ const { buildGoogleCalendarUrl } = require("./calendar");
 const { getHistory, appendMessages, clearHistory } = require("./history");
 const { logReceipt, getReceiptReport } = require("./receipts");
 const { saveReminder } = require("./reminders");
+const { compareProductPrices } = require("./prices");
+const { getEntertainment }    = require("./mevalim");
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואטסאפ. אתה עוזר לזיו (גבר) ולטל (אישה) עם קניות, הוצאות, אירועים ויומן.
+const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בטלגרם. אתה עוזר לזיו (גבר) ולטל (אישה) עם קניות, הוצאות, אירועים ויומן.
 זיו — גבר. פנייה אליו: אתה, קנית, שילמת וכו'.
 טל — אישה. פנייה אליה: את, קנית, שילמת וכו' (בנטייה נקבה).
 
 שפה: עברית בלבד. תמיד. גם אם פונים אליך באנגלית — עונה בעברית.
 
 אופי:
-- כותב כמו חבר בוואטסאפ — קצר, ישיר, ידידותי
+- כותב כמו חבר בטלגרם — קצר, ישיר, ידידותי
 - לא פורמלי, אבל גם לא מנסה להיות מצחיק — פשוט עוזר
 - אין בדיחות, אין הערות "חכמות" בסוף הודעה, אין ציניות
 - אמוג'י — מעט ובמינון. רק כשזה מוסיף משהו
@@ -37,6 +39,8 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
 - send_calendar_invite: שליחת זימון ליומן גוגל
 - find_events: חיפוש הופעות, קונצרטים, סטנדאפ לפי תאריכים
 - set_reminder: לקבוע תזכורת לשעה מסוימת
+- compare_prices: השוואת מחירים של מוצר בין רשתות סופרמרקט בישראל (שופרסל, רמי לוי, ויקטורי וכו') — נתונים בזמן אמת מ-chp.co.il
+- find_shows: חיפוש הופעות, סטנדאפ, קונצרטים, הצגות ועוד מ-mevalim.co.il — נתונים חיים כולל מחירים וקישורי רכישה ישירים, ניתן לסנן לפי קטגוריה ואזור
 
 מה אתה תומך בו — עונה על שאלות על היכולות שלך לפי הרשימה הזו בלבד:
 - הודעות טקסט ✅
@@ -58,7 +62,7 @@ const SYSTEM_PROMPT = `אתה מוטי — הבוט של המשפחה בוואט
   זהו. לא להוסיף הערות, בדיחות, או משפטים נוספים.
 - "ניקוי הרשימה": תמיד לשאול קודם. בלי אישור מפורש — לא מוחקים כלום.
 - לזימון יומן — ALWAYS קרא ל-send_calendar_invite. אל תגיד שזימנת בלי לקרוא לכלי. כל התאריכים בשעון ישראל (+03:00).
-- לחיפוש אירועים — ALWAYS קרא ל-find_events. אל תמציא הופעות. הצג את התוצאות בפורמט ברור עם תאריך, שעה ומיקום. אם אין תוצאות — תגיד את זה ישר. הצע לקבוע תזכורת לאירועים שמעניינים אותם.
+- לחיפוש אירועים — ALWAYS קרא ל-find_shows (לא find_events). אל תמציא הופעות. הצג את התוצאות בפורמט ברור: שם, תאריך, שעה, מקום, מחיר (אם יש). אם יש ticketUrl שמתחיל ב-tickets.mevalim.co.il — הצג אותו כ"לרכישה". אם אין תוצאות — תגיד את זה ישר. הצע לקבוע תזכורת לאירועים שמעניינים אותם.
 - אם ההודעה מתחילה ב"דחוף" — זה אורגנטי, הצד השני יקבל התראה פרטית.
 - לתזכורת — ALWAYS קרא ל-set_reminder. פרש תאריך/שעה יחסיים ("הלילה ב-21", "מחר בצהריים") לפי TODAY'S DATE. אחרי set_reminder ענה: ✅ תזכורת נקבעה ל-{שעה}: {טקסט}
 
@@ -297,6 +301,42 @@ const TOOLS = [
     },
   },
   {
+    name: "find_shows",
+    description: "Search for upcoming entertainment shows in Israel from mevalim.co.il (live data). Categories: stand-up, concerts, theater, shows, musicals, dance, kids-shows, lectures. Call this when someone asks about events, shows, concerts, stand-up, theater, or what to do.",
+    input_schema: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          description: "Category slug or Hebrew keyword. Slugs: stand-up, concerts, theater, shows, musicals, dance, kids-shows, lectures. Hebrew: סטנדאפ, קונצרטים, תיאטרון, הופעות, מחזמרים, מחול, ילדים, הרצאות.",
+        },
+        region: {
+          type: "string",
+          description: "Optional region or city filter in Hebrew (e.g. 'מרכז', 'תל אביב', 'צפון', 'ירושלים', 'דרום'). Omit for all regions.",
+        },
+      },
+      required: ["category"],
+    },
+  },
+  {
+    name: "compare_prices",
+    description: "Compare real-time prices for a grocery product across Israeli supermarket chains (Shufersal, Rami Levy, Victory, etc.) using chp.co.il. Use when someone asks about product prices, where something is cheapest, or wants a price comparison.",
+    input_schema: {
+      type: "object",
+      properties: {
+        product: {
+          type: "string",
+          description: "Product name in Hebrew (e.g. 'חלב 3%', 'קוקה קולה 1.5 ליטר') or a barcode number",
+        },
+        city: {
+          type: "string",
+          description: "City name in Hebrew (e.g. 'תל אביב', 'ירושלים', 'חיפה'). If not mentioned by the user, use the family's city or ask.",
+        },
+      },
+      required: ["product", "city"],
+    },
+  },
+  {
     name: "set_reminder",
     description: "Schedule a reminder message to be sent at a specific future time. Use when someone says 'תזכיר לי', 'remind me', 'תשלח לי תזכורת', etc.",
     input_schema: {
@@ -507,6 +547,37 @@ async function executeTool(toolName, input, { me }) {
       return { count: rows.length, events: rows };
     }
 
+    case "find_shows": {
+      const result = await getEntertainment(input.category, input.region || "");
+      if (result.notFound) {
+        return { success: false, message: result.message || `לא נמצאו הופעות בקטגוריה "${input.category}"${input.region ? ` באזור "${input.region}"` : ""}` };
+      }
+      return {
+        success:       true,
+        category:      result.category,
+        categoryLabel: result.categoryLabel,
+        region:        result.region,
+        total:         result.total,
+        shows:         result.shows.slice(0, 15), // cap at 15 to keep response size reasonable
+      };
+    }
+
+    case "compare_prices": {
+      const result = await compareProductPrices(input.product, input.city);
+      if (result.notFound) {
+        return { success: false, message: `לא נמצא מוצר בשם "${input.product}"` };
+      }
+      return {
+        success:      true,
+        product:      result.product,
+        manufacturer: result.manufacturer,
+        barcode:      result.barcode,
+        priceRange:   result.priceRange,
+        city:         result.city,
+        chains:       result.chains,
+      };
+    }
+
     case "set_reminder": {
       const groupId = process.env.TELEGRAM_CHAT_ID || process.env.WHATSAPP_GROUP_ID;
       const reminder = await saveReminder({
@@ -584,6 +655,14 @@ async function processMessage(text, me, historyKey) {
   const isReminderIntent = !isCalendarIntent && !isExpenseIntent && !isEventsIntent && !isEditIntent
     && /תזכיר|תזכור|תשלח תזכורת|remind/.test(text);
 
+  // Detect price comparison intent
+  const isPriceIntent = !isCalendarIntent && !isExpenseIntent && !isEventsIntent && !isEditIntent && !isReminderIntent
+    && /כמה עולה|מחיר של|איפה זול|הכי זול|השווה מחיר|השוואת מחיר|price comparison|compare price|chp/.test(text);
+
+  // Detect entertainment / shows intent (mevalim)
+  const isShowsIntent = !isCalendarIntent && !isExpenseIntent && !isEditIntent && !isReminderIntent && !isPriceIntent
+    && /סטנדאפ|סטנד.?אפ|קונצרט|תיאטרון|הצגה|הופעה|מחזמר|מחול|בלט|הרצאה|מה יש לעשות|בילוי|לבלות|אירועים|mevalim/.test(text);
+
   // Clear history command — wipe stored conversation context
   if (/נקה.*(שיחה|היסטוריה|זיכרון)|איפוס שיחה|reset.*(chat|history)/i.test(text)) {
     await clearHistory(key);
@@ -601,6 +680,10 @@ async function processMessage(text, me, historyKey) {
       ? { type: "tool", name: "edit_expense" }
       : (i === 0 && isReminderIntent)
       ? { type: "tool", name: "set_reminder" }
+      : (i === 0 && isPriceIntent)
+      ? { type: "tool", name: "compare_prices" }
+      : (i === 0 && isShowsIntent)
+      ? { type: "tool", name: "find_shows" }
       : { type: "auto" };
 
     const response = await withTimeout(
