@@ -42,9 +42,31 @@ npm install -g openclaw@latest
 
 ## Step 2 — Clone the Repo
 
+GitHub no longer supports password authentication. Use the GitHub CLI instead:
+
+```bash
+# Install GitHub CLI
+brew install gh
+
+# Authenticate — this will print a code like AB12-CD34 in the terminal
+gh auth login
+```
+
+When `gh auth login` runs, follow these steps:
+1. Choose **GitHub.com**
+2. Choose **HTTPS**
+3. Choose **Login with a web browser**
+4. It prints a code like `AB12-CD34` — **copy it**
+5. Open Safari/Chrome and go to **github.com/login/device**
+6. Sign in to GitHub if prompted
+7. Paste the code and click **Continue → Authorize GitHub CLI**
+8. Terminal says "Logged in as zivklempner" — done
+
+Now clone:
+
 ```bash
 cd ~
-git clone https://github.com/YOUR_USERNAME/moti-boti.git
+gh repo clone zivklempner/moti-boti
 cd moti-boti
 npm install
 ```
